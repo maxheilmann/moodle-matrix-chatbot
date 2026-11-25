@@ -103,3 +103,32 @@ export const cancel = ({conversationId}) => ({type: 'cancel', 'conversation_id':
  */
 export const resume = ({conversationId, lastSeq}) => ({type: 'resume', 'conversation_id': conversationId,
     'last_seq': lastSeq || 0});
+
+/**
+ * One-line summary of an interaction answer, as shown once the prompt is answered. The client builds
+ * it itself when it sends; this rebuilds it from the stored response when a history is replayed.
+ *
+ * @param {Object|null} response what was sent: {text, selected}, {confirmed} or {id}
+ * @param {Object} labels
+ * @param {string} labels.yes text of the "yes" answer
+ * @param {string} labels.no text of the "no" answer
+ * @param {Function} labels.label (id) => display text of a choice, or ''
+ * @returns {string}
+ */
+export const answerSummary = (response, {yes, no, label}) => {
+    const r = response || {};
+    const text = typeof r.text === 'string' ? r.text.trim() : '';
+    if (text) {
+        return text;
+    }
+    if (Array.isArray(r.selected) && r.selected.length) {
+        return r.selected.join(', ');
+    }
+    if (typeof r.confirmed === 'boolean') {
+        return r.confirmed ? yes : no;
+    }
+    if (r.id !== undefined && r.id !== null) {
+        return label(String(r.id)) || String(r.id);
+    }
+    return '';
+};

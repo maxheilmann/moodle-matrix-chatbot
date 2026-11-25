@@ -43,7 +43,8 @@ import {
 } from 'local_llmchat/tooldetails';
 
 const STRING_KEYS = [
-    'cancelled', 'copied', 'error', 'newconversation', 'offline', 'queuedmessage', 'quota:exemptuser', 'quota:remaining',
+    'cancelled', 'confirm:no', 'confirm:yes', 'copied', 'error', 'newconversation', 'offline', 'queuedmessage',
+    'quota:exemptuser', 'quota:remaining',
     'quota:remainingmonth', 'quota:thismonth', 'quota:today', 'quota:usedof', 'ratelimited:burst', 'ratelimited:site',
     'ratelimited:user', 'reconnected', 'resume',
     'turninterrupted', 'unknowninteraction', 'untitled',
@@ -74,6 +75,7 @@ const FRAME_HANDLERS = {
     'tool_progress': 'onToolProgress',
     'tool_result': 'onToolResult',
     'question': 'onQuestion',
+    'user_answer': 'onUserAnswer',
     'citations': 'onCitations',
     'final': 'onFinal',
     'cancelled': 'onCancelled',
@@ -977,6 +979,7 @@ class ChatController {
         const node = await renderNode('tool_call', Object.assign({uniqid: uniqid('llmchat-tool'), icon, component, label}, call));
         this.advance(turn, 'tool_call');
         this.toolGroup(turn).appendChild(node);
+        node.dataset.tool = frame.name;
         turn.cards.set(frame.id, node);
         // Not awaited: links arrive when ready and never hold up the stream.
         this.linkPaths(node, call);
@@ -1193,9 +1196,14 @@ class ChatController {
             const error = document.createElement('div');
             error.className = 'text-danger small mb-2';
             error.textContent = String(frame.error);
-            node.querySelector('.card-body')?.prepend(error);
+            node.prepend(error);
         }
-        this.place(turn, node);
+        const card = this.pendingCard(turn, frame.tool);
+        if (card) {
+            this.openInCard(card, node);
+        } else {
+            this.place(turn, node);
+        }
         this.newTextSegment(turn);
         this.setRunning(false);
         if (!replay) {
@@ -1204,7 +1212,38 @@ class ChatController {
     }
 
     /**
-     * Send an interaction answer and replace the prompt with a compact summary.
+     * The card of the tool call that is waiting for the answer: the latest one of that tool that has no result yet.
+     *
+     * @param {Object} turn
+     * @param {string} tool name of the interactive tool
+     * @returns {HTMLElement|undefined}
+     */
+    pendingCard(turn, tool) {
+        return [...turn.cards.values()].reverse().find((card) => card.isConnected
+            && (!tool || card.dataset.tool === tool)
+            && !card.querySelector('[data-region="spinner"]').classList.contains('d-none'));
+    }
+
+    /**
+     * Show the question inside the tool card that asked it, so call and question read as one box. The
+     * card's label gives way to the bare tool name meanwhile, as the question is right below it.
+     *
+     * @param {HTMLElement} card
+     * @param {HTMLElement} node
+     */
+    openInCard(card, node) {
+        const label = card.querySelector('[data-region="label"]');
+        const meta = this.tools.get(card.dataset.tool) || {};
+        if (label && meta.label) {
+            label.dataset.full = label.textContent;
+            label.textContent = meta.label;
+        }
+        card.classList.add('local-llmchat-asking');
+        card.querySelector('[data-region="collapsible"]').before(node);
+    }
+
+    /**
+     * Send an interaction answer: the prompt collapses into a one-line summary of the answer.
      *
      * @param {Object} turn
      * @param {HTMLElement} node
@@ -1216,15 +1255,86 @@ class ChatController {
         try {
             const t = await this.issueToken();
             this.socket.send(frames.answer({conversationId: this.conversationId, interruptId, response, token: t.token}));
-            const answered = await renderNode('interaction_answered', {answer: summary});
-            answered.dataset.interrupt = interruptId;
-            node.replaceWith(answered);
+            await this.settleInteraction(node, interruptId, summary);
             this.setRunning(true);
             this.advance(turn, 'user_answer');
             this.scroll();
         } catch (e) {
             this.showStatus('error', String(e && e.message ? e.message : e));
         }
+    }
+
+    /**
+     * Replace an open prompt with the one-line summary of its answer. Inside a tool card the prompt folds
+     * away and the card gets its own label back.
+     *
+     * @param {HTMLElement} node the open prompt
+     * @param {string} interruptId
+     * @param {string} summary
+     * @param {boolean} [animate] fold it away (false: gone at once, for a history being replayed)
+     */
+    async settleInteraction(node, interruptId, summary, animate = true) {
+        const answered = await renderNode('interaction_answered', {answer: summary});
+        answered.dataset.interrupt = interruptId;
+        const card = node.closest('[data-region="tool"]');
+        if (!card) {
+            node.replaceWith(answered);
+            return;
+        }
+        const label = card.querySelector('[data-region="label"]');
+        if (label && label.dataset.full) {
+            label.textContent = label.dataset.full;
+        }
+        card.classList.remove('local-llmchat-asking');
+        node.after(answered);
+        if (animate) {
+            this.collapse(node);
+        } else {
+            node.remove();
+        }
+    }
+
+    /**
+     * A stored (or another tab's) answer: the prompt it belongs to is answered, so it no longer asks.
+     * Without this a re-opened conversation would show every answered question as open again.
+     *
+     * @param {Object} frame user_answer{interrupt_id, response}
+     * @param {boolean} replay
+     */
+    async onUserAnswer(frame, replay) {
+        const turn = await this.currentTurn(frame);
+        const interruptId = String(frame.interrupt_id);
+        const node = [...turn.body.querySelectorAll('[data-region="interaction"][data-interrupt]')]
+            .find((n) => n.dataset.interrupt === interruptId
+                && !n.classList.contains('local-llmchat-answered') && !n.classList.contains('local-llmchat-collapsing'));
+        if (!node) {
+            return; // Answered here: answerInteraction() already settled it.
+        }
+        const summary = frames.answerSummary(frame.response, {
+            yes: this.str['confirm:yes'], no: this.str['confirm:no'],
+            label: (id) => [...node.querySelectorAll('[data-action="choose"]')]
+                .find((b) => b.dataset.id === id)?.textContent.trim() || '',
+        });
+        await this.settleInteraction(node, interruptId, summary, !replay);
+        this.advance(turn, 'user_answer');
+    }
+
+    /**
+     * Fold a block away (height and opacity ease to nothing), then remove it. Without motion (reduced
+     * motion, or no transition end) it goes right away.
+     *
+     * @param {HTMLElement} node
+     */
+    collapse(node) {
+        node.style.height = `${node.offsetHeight}px`;
+        node.classList.add('local-llmchat-collapsing');
+        node.setAttribute('inert', '');
+        // Force a reflow so the height above is the transition's start value.
+        void node.offsetHeight;
+        node.style.height = '0';
+        const done = () => node.remove();
+        node.addEventListener('transitionend', done, {once: true});
+        setTimeout(done, 400);
     }
 
     /**

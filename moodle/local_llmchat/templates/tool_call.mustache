@@ -40,7 +40,7 @@
     <button type="button" class="btn btn-link p-0 w-100 d-flex align-items-center text-start text-left local-llmchat-toggle local-llmchat-toolhead"
         data-action="toggle" aria-expanded="false" aria-controls="{{uniqid}}">
         <span class="local-llmchat-toolicon text-muted">{{#pix}} {{icon}}, {{component}} {{/pix}}</span>
-        <span class="text-truncate local-llmchat-minw0">{{label}}</span>
+        <span class="text-truncate local-llmchat-minw0" data-region="label">{{label}}</span>
         <span class="text-muted text-truncate ms-auto ps-2 local-llmchat-toolsummary" data-region="summary">{{summary}}</span>
         <span class="spinner-border spinner-border-sm text-secondary ms-2 flex-shrink-0{{#done}} d-none{{/done}}" data-region="spinner" role="status">
             <span class="sr-only visually-hidden">{{#str}} tool:running, local_llmchat {{/str}}</span>
