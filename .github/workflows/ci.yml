@@ -46,6 +46,19 @@ jobs:
       - name: Integration tests
         run: pytest -m integration
 
+  js-unit:
+    # The chat's browser code (amd/src) tested under Node's built-in runner: no Moodle,
+    # no npm install. Needs Node 22.15+ (markdown.test.mjs uses module.registerHooks).
+    name: Plugin JavaScript — unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: JavaScript unit tests
+        run: node --test moodle/local_llmchat/tests/js/*.test.mjs
+
   detect-plugin:
     # hashFiles() is not allowed in a job-level `if`, so detect the plugin in a step.
     runs-on: ubuntu-latest

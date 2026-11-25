@@ -5,12 +5,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from moodle_llm_chat.quota.service import QuotaService, QuotaStatus
+from moodle_llm_chat.web.auth import CHAT_RESPONSES
 from moodle_llm_chat.web.routes.conversations import ChatUser
 
-router = APIRouter(prefix="/api/quota", tags=["quota"])
+router = APIRouter(prefix="/api/quota", tags=["quota"], responses=CHAT_RESPONSES)
 
 
-@router.get("")
+@router.get("", summary="Show the user's token budget")
 async def quota_status(v: ChatUser, request: Request) -> QuotaStatus:
     """What the chat's budget ring shows, so a page can render it before the first turn.
 

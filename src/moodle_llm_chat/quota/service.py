@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from moodle_llm_chat.access.scope import QuotaClaim
 from moodle_llm_chat.agent.events import UsageEvent
@@ -35,20 +35,43 @@ INGEST_PURPOSES = ("embed", "ocr")
 
 
 class QuotaPolicy(BaseModel):
-    site_tokens_per_day: int | None = None
-    site_tokens_per_month: int | None = None
-    user_tokens_per_day: int | None = None
-    user_tokens_per_month: int | None = None
-    max_tokens_per_turn: int | None = None
-    count_reasoning: bool = True
-    exempt_users_bypass_site: bool = False
-    timezone: str | None = None
+    site_tokens_per_day: int | None = Field(
+        default=None, description="Chat tokens the whole site may use per day; null = no limit."
+    )
+    site_tokens_per_month: int | None = Field(
+        default=None, description="Chat tokens the whole site may use per month; null = no limit."
+    )
+    user_tokens_per_day: int | None = Field(
+        default=None, description="Default chat tokens per user and day; null = no limit."
+    )
+    user_tokens_per_month: int | None = Field(
+        default=None, description="Default chat tokens per user and month; null = no limit."
+    )
+    max_tokens_per_turn: int | None = Field(
+        default=None, description="Most tokens one answer may use before it is wrapped up."
+    )
+    count_reasoning: bool = Field(
+        default=True, description="Whether the model's reasoning tokens count against limits."
+    )
+    exempt_users_bypass_site: bool = Field(
+        default=False, description="Whether exempt users are also outside the site-wide limits."
+    )
+    timezone: str | None = Field(
+        default=None,
+        description="IANA time zone in which days and months start; the server's if null.",
+    )
 
 
 class SiteCeilings(BaseModel):
-    tokens_per_day: int | None = None
-    tokens_per_month: int | None = None
-    ingest_tokens_per_day: int | None = None
+    tokens_per_day: int | None = Field(
+        default=None, description="Operator's hard daily chat-token ceiling; null = none."
+    )
+    tokens_per_month: int | None = Field(
+        default=None, description="Operator's hard monthly chat-token ceiling; null = none."
+    )
+    ingest_tokens_per_day: int | None = Field(
+        default=None, description="Operator's daily ceiling for tokens spent on ingestion."
+    )
 
 
 class QuotaExceeded(Exception):
@@ -61,12 +84,12 @@ class QuotaExceeded(Exception):
 
 
 class QuotaStatus(BaseModel):
-    used_today: int
-    limit_today: int | None
-    used_month: int
-    limit_month: int | None
-    resets_at: int
-    exempt: bool
+    used_today: int = Field(description="Tokens the user has used today.")
+    limit_today: int | None = Field(description="The user's daily limit; null = no limit.")
+    used_month: int = Field(description="Tokens the user has used this month.")
+    limit_month: int | None = Field(description="The user's monthly limit; null = no limit.")
+    resets_at: int = Field(description="When the daily window ends, Unix seconds.")
+    exempt: bool = Field(description="Whether the user is exempt from the per-user limits.")
 
 
 def _min(*values: int | None) -> int | None:
