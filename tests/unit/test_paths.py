@@ -25,14 +25,14 @@ def scope(*cmids: int) -> AccessScope:
 
 @pytest.fixture
 def tree_store(store: Store) -> Store:
-    store.upsert_courses(
+    store.documents.upsert_courses(
         S,
         [
             CourseIn(course_id=2, fullname="Netzwerke LF7", shortname="LF7"),
             CourseIn(course_id=3, fullname="Mathematik", shortname="MA"),
         ],
     )
-    store.upsert_documents(
+    store.documents.upsert_documents(
         S,
         [
             doc(
@@ -124,8 +124,10 @@ class TestStructure:
 
     def test_sections_sharing_an_order_stay_apart(self, store: Store) -> None:
         """A section inserted before others shares a stale order with the next one."""
-        store.upsert_courses(S, [CourseIn(course_id=2, fullname="Netzwerke", shortname="LF7")])
-        store.upsert_documents(
+        store.documents.upsert_courses(
+            S, [CourseIn(course_id=2, fullname="Netzwerke", shortname="LF7")]
+        )
+        store.documents.upsert_documents(
             S,
             [
                 doc(
@@ -204,8 +206,10 @@ class TestLocation:
         assert tree.location(tree.resolve("/MA/Abschnitt 0"))[-1].name == "Abschnitt 0"
 
     def test_duplicates_differ_by_id_not_by_suffix(self, store: Store) -> None:
-        store.upsert_courses(S, [CourseIn(course_id=2, fullname="Netzwerke", shortname="LF7")])
-        store.upsert_documents(
+        store.documents.upsert_courses(
+            S, [CourseIn(course_id=2, fullname="Netzwerke", shortname="LF7")]
+        )
+        store.documents.upsert_documents(
             S,
             [
                 doc("2:31:b", cmid=31, section_id=135, section_order=2, section_name="LF 11"),

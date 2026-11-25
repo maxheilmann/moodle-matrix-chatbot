@@ -164,7 +164,7 @@ async def sync_start(body: SyncStart, site: SiteDep, store: StoreDep) -> SyncSta
     while one is open is a conflict.
     """
     try:
-        store.start_sync(site.site_id, body.sync_id, mode=body.mode)
+        store.documents.start_sync(site.site_id, body.sync_id, mode=body.mode)
     except SyncStateError as exc:
         raise _conflict(exc) from exc
     return SyncStarted(sync_id=body.sync_id)
@@ -182,7 +182,7 @@ async def manifest(body: Manifest, site: SiteDep, store: StoreDep) -> NeededDocu
     documents whose content the server lacks or has stale, so the plugin sends only those.
     """
     try:
-        need = store.apply_manifest(site.site_id, body.sync_id, body.hashes())
+        need = store.documents.apply_manifest(site.site_id, body.sync_id, body.hashes())
     except SyncStateError as exc:
         raise _conflict(exc) from exc
     return NeededDocuments(need=need)
@@ -201,10 +201,10 @@ async def sync_finish(body: SyncRef, site: SiteDep, store: StoreDep) -> SyncResu
     run that is already finished does nothing.
     """
     try:
-        result = store.finish_sync(site.site_id, body.sync_id)
+        result = store.documents.finish_sync(site.site_id, body.sync_id)
     except SyncStateError as exc:
         raise _conflict(exc) from exc
-    store.delete_orphan_blobs()
+    store.blobs.delete_orphan_blobs()
     return result
 
 
@@ -216,7 +216,7 @@ async def courses(body: list[CourseIn] | CoursesBody, site: SiteDep, store: Stor
     """Upsert course records. The body is a JSON array of courses, or an object with a
     `courses` array and the `sync_id` of an open run."""
     items, sync_id = (body, None) if isinstance(body, list) else (body.courses, body.sync_id)
-    store.upsert_courses(site.site_id, items, sync_id=sync_id)
+    store.documents.upsert_courses(site.site_id, items, sync_id=sync_id)
     return Count(count=len(items))
 
 
@@ -226,7 +226,7 @@ async def delete_courses(body: CourseIds, site: SiteDep, store: StoreDep) -> Doc
 
     Unknown course ids are ignored, so the call can be repeated.
     """
-    gone = store.tombstone_courses(site.site_id, body.course_ids)
+    gone = store.documents.tombstone_courses(site.site_id, body.course_ids)
     return DocumentsRemoved(documents_removed=len(gone))
 
 
@@ -253,11 +253,11 @@ async def documents(
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"at most {MAX_DOCUMENTS_PER_REQUEST} documents per request",
         )
-    result = store.upsert_documents_detailed(site.site_id, items, sync_id=sync_id)
-    needs_blob = store.missing_blobs(d.file.sha256 for d in items if d.file)
+    result = store.documents.upsert_documents_detailed(site.site_id, items, sync_id=sync_id)
+    needs_blob = store.blobs.missing_blobs(d.file.sha256 for d in items if d.file)
     if result.changed:
         # Pushes during an open full sync are bulk work; everything else is urgent.
-        bulk = sync_id is not None or store.has_open_full_sync(site.site_id)
+        bulk = sync_id is not None or store.documents.has_open_full_sync(site.site_id)
         for listener in request.app.state.document_listeners:
             listener(site.site_id, result.changed, bulk)
     if result.relocated:
@@ -274,7 +274,7 @@ async def delete_documents(body: list[str] | DocIds, site: SiteDep, store: Store
     ids are ignored, so the call can be repeated.
     """
     doc_ids = body if isinstance(body, list) else body.doc_ids
-    store.tombstone_documents(site.site_id, doc_ids)
+    store.documents.tombstone_documents(site.site_id, doc_ids)
     return Count(count=len(doc_ids))
 
 
@@ -302,12 +302,12 @@ async def put_blob(
     against the hash, encrypted and stored once, however many documents use them. Sending
     a file the server already has is harmless and stores nothing.
     """
-    if not store.blob_referenced(site.site_id, sha256):
+    if not store.blobs.blob_referenced(site.site_id, sha256):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no document references this blob")
-    if store.blob_exists(sha256):
+    if store.blobs.blob_exists(sha256):
         return JSONResponse({"sha256": sha256, "stored": False}, status_code=200)
     limit = request.app.state.settings.pipeline.max_file_bytes
-    writer = store.blob_writer(sha256, max_bytes=limit)
+    writer = store.blobs.blob_writer(sha256, max_bytes=limit)
     try:
         async for chunk in request.stream():
             writer.write(chunk)

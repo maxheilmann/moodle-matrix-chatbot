@@ -48,7 +48,7 @@ class FakeMoodle:
 
 
 def index(store: Store, doc_id: str, cmid: int, pages: list[str], **kw: Any) -> None:
-    store.upsert_documents(S, [doc(doc_id, cmid=cmid, **kw)])
+    store.documents.upsert_documents(S, [doc(doc_id, cmid=cmid, **kw)])
     segs = [
         SegmentIn(ordinal=i, text=t, page=i + 1 if len(pages) > 1 else None)
         for i, t in enumerate(pages)
@@ -57,14 +57,14 @@ def index(store: Store, doc_id: str, cmid: int, pages: list[str], **kw: Any) -> 
         ChunkIn(ordinal=i, text=t, header_text="", page=s.page)
         for i, (t, s) in enumerate(zip(pages, segs, strict=True))
     ]
-    store.replace_content(S, doc_id, segs, chunks)
-    store.record_extraction(S, doc_id, extract_version=1)
+    store.chunks.replace_content(S, doc_id, segs, chunks)
+    store.documents.record_extraction(S, doc_id, extract_version=1)
 
 
 @pytest.fixture
 def world(store: Store) -> Store:
-    store.add_site(S, name="A", url="https://moodle.a.test")
-    store.upsert_courses(
+    store.sites.add_site(S, name="A", url="https://moodle.a.test")
+    store.documents.upsert_courses(
         S,
         [
             CourseIn(course_id=2, fullname="Netzwerke LF7", shortname="LF7"),
@@ -136,7 +136,7 @@ def ctx(
         caps=frozenset({Capability.READ, Capability.INTERACT}),
     )
     return RunContext(
-        site=store.site(S),
+        site=store.sites.site(S),
         scope=scope,
         user=UserProfile(
             user_id=7,

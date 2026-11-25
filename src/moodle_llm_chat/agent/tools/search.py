@@ -162,13 +162,15 @@ class SearchRegex(Tool[RegexArgs]):
         wanted = scope_doc_ids(ctx, args.path)
         docs = [
             d
-            for d in ctx.store.live_documents(ctx.site.site_id, cmids=ctx.scope.cmids)
+            for d in ctx.store.documents.live_documents(ctx.site.site_id, cmids=ctx.scope.cmids)
             if (wanted is None or d.doc_id in wanted)
             and (since is None or d.timemodified >= since)
             and (until is None or d.timemodified <= until)
         ]
         docs = await ctx.readable(docs)
-        corpus = [(d, s) for d in docs for s in ctx.store.segments(ctx.site.site_id, d.doc_id)]
+        corpus = [
+            (d, s) for d in docs for s in ctx.store.chunks.segments(ctx.site.site_id, d.doc_id)
+        ]
 
         def scan() -> list[tuple[int, int | None, str]]:
             found: list[tuple[int, int | None, str]] = []

@@ -86,7 +86,7 @@ class Searcher:
         lexical: list[int] = []
         match = fts5_query(query)
         if match:
-            lexical = self.store.fts_chunk_ids(
+            lexical = self.store.chunks.fts_chunk_ids(
                 scope.site_id,
                 match,
                 limit=CANDIDATE_DEPTH,
@@ -98,7 +98,7 @@ class Searcher:
         semantic: list[int] = []
         if self.embedder is not None:
             vector = await self.embedder.embed_query(query)
-            semantic = self.store.vector_chunk_ids(
+            semantic = self.store.chunks.vector_chunk_ids(
                 scope.site_id,
                 vector,
                 limit=CANDIDATE_DEPTH,
@@ -128,7 +128,7 @@ class Searcher:
         match = fts5_query(query, mode=mode)
         if not match:
             return []
-        ids = self.store.fts_chunk_ids(
+        ids = self.store.chunks.fts_chunk_ids(
             scope.site_id,
             match,
             limit=k,
@@ -143,7 +143,9 @@ class Searcher:
     def _hydrate(
         self, scope: AccessScope, ranked: list[tuple[int, float]], sources: dict[int, list[str]]
     ) -> list[Hit]:
-        chunks = {c.chunk_id: c for c in self.store.chunks(scope.site_id, [c for c, _ in ranked])}
+        chunks = {
+            c.chunk_id: c for c in self.store.chunks.chunks(scope.site_id, [c for c, _ in ranked])
+        }
         docs: dict[str, Document] = {}
         hits: list[Hit] = []
         for cid, score in ranked:
@@ -151,7 +153,7 @@ class Searcher:
             if chunk is None:
                 continue
             if chunk.doc_id not in docs:
-                docs[chunk.doc_id] = self.store.document(scope.site_id, chunk.doc_id)
+                docs[chunk.doc_id] = self.store.documents.document(scope.site_id, chunk.doc_id)
             document = docs[chunk.doc_id]
             if document.cmid not in scope.cmids:  # belt and braces
                 continue

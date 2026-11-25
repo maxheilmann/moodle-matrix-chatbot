@@ -32,7 +32,7 @@ def clock() -> Clock:
 
 @pytest.fixture
 def quota(store: Store, clock: Clock) -> QuotaService:
-    store.add_site(S, name="A", url="https://moodle.a.test")
+    store.sites.add_site(S, name="A", url="https://moodle.a.test")
     return QuotaService(
         store, QuotaSection(min_headroom_tokens=100), timezone="Europe/Berlin", clock=clock
     )
@@ -137,7 +137,7 @@ class TestSiteLimits:
             quota.check(S, 1, QuotaClaim(exempt=True))
 
     def test_sites_are_isolated(self, quota: QuotaService, store: Store) -> None:
-        store.add_site("site-b", name="B", url="https://b.test")
+        store.sites.add_site("site-b", name="B", url="https://b.test")
         quota.set_policy(S, QuotaPolicy(site_tokens_per_day=100))
         quota.record("site-b", 1, "c", "t", UsageEvent(input_tokens=5000))
         quota.check(S, 1, None)

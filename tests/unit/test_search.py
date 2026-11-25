@@ -44,15 +44,15 @@ class FakeEmbedder:
 def index(
     store: Store, doc_id: str, cmid: int, text: str, *, vector: list[float] | None = None, **kw: Any
 ) -> int:
-    store.upsert_documents(S, [doc(doc_id, cmid=cmid, **kw)])
-    (cid,) = store.replace_content(
+    store.documents.upsert_documents(S, [doc(doc_id, cmid=cmid, **kw)])
+    (cid,) = store.chunks.replace_content(
         S,
         doc_id,
         [SegmentIn(ordinal=0, text=text)],
         [ChunkIn(ordinal=0, text=text, header_text="LF7")],
     )
     if vector is not None:
-        store.set_embedding(cid, vector)
+        store.chunks.set_embedding(cid, vector)
     return cid
 
 
@@ -105,7 +105,7 @@ class TestQuerySyntax:
     def test_user_input_never_breaks_fts(self, populated: Store, raw: str) -> None:
         match = fts5_query(raw)
         if match:
-            populated.fts_chunk_ids(S, match, limit=5)
+            populated.chunks.fts_chunk_ids(S, match, limit=5)
 
     def test_phrase_mode(self) -> None:
         assert fts5_query("statisches routing", mode="phrase") == '"statisches routing"'

@@ -145,7 +145,7 @@ def site_add(
     """Register a site and print its secret ONCE — paste it into the plugin settings."""
     with _open_store(load_settings()) as store:
         try:
-            secret = store.add_site(site_id, name=name, url=url)
+            secret = store.sites.add_site(site_id, name=name, url=url)
         except StoreError as exc:
             raise _fail(str(exc)) from exc
     typer.echo(f"site {site_id} added. Secret (shown once, store it in the plugin):")
@@ -156,7 +156,7 @@ def site_add(
 def site_list() -> None:
     """List registered sites (secrets are never shown)."""
     with _open_store(load_settings()) as store:
-        for site in store.sites():
+        for site in store.sites.sites():
             state = "revoked" if site.revoked_at else "active"
             created = datetime.fromtimestamp(site.created_at, UTC).date().isoformat()
             typer.echo(f"{site.site_id}\t{state}\t{site.url}\t{site.name}\t{created}")
@@ -170,7 +170,7 @@ def site_rotate(
     """Issue a new secret; the old one keeps working for --grace seconds."""
     with _open_store(load_settings()) as store:
         try:
-            secret = store.rotate_site_secret(site_id, grace_s=grace)
+            secret = store.sites.rotate_site_secret(site_id, grace_s=grace)
         except StoreError as exc:
             raise _fail(str(exc)) from exc
     typer.echo(f"new secret for {site_id} (old one valid for {grace}s more):")
@@ -182,7 +182,7 @@ def site_revoke(site_id: str) -> None:
     """Revoke a site immediately; all its requests and chat tokens are refused."""
     with _open_store(load_settings()) as store:
         try:
-            store.revoke_site(site_id)
+            store.sites.revoke_site(site_id)
         except StoreError as exc:
             raise _fail(str(exc)) from exc
     typer.echo(f"site {site_id} revoked")
@@ -242,12 +242,12 @@ def status(site: str = typer.Option(..., help="Site id.")) -> None:
     """Content counts, processing backlog and the last sync of a site."""
     with _open_store(load_settings()) as store:
         try:
-            store.site(site)
+            store.sites.site(site)
         except StoreError as exc:
             raise _fail(str(exc)) from exc
         info = store.status(site)
-        info["jobs"] = store.job_counts()
-        info["pending_vectors"] = store.pending_vector_count()
+        info["jobs"] = store.jobs.job_counts()
+        info["pending_vectors"] = store.chunks.pending_vector_count()
     typer.echo(json.dumps(info, indent=2, default=str))
 
 
@@ -257,7 +257,7 @@ def reprocess(
 ) -> None:
     """Re-extract documents on the next API start (e.g. after enabling OCR)."""
     with _open_store(load_settings()) as store:
-        n = store.reset_extraction(only_skipped=skipped_only)
+        n = store.documents.reset_extraction(only_skipped=skipped_only)
     typer.echo(f"{n} documents marked for reprocessing")
 
 
@@ -269,7 +269,7 @@ def reembed(
     if not yes:
         raise _fail("this drops every stored vector; re-run with --yes")
     with _open_store(load_settings(), reset_embeddings=True) as store:
-        pending = store.pending_vector_count()
+        pending = store.chunks.pending_vector_count()
     typer.echo(f"vectors dropped; {pending} chunks will be re-embedded")
 
 

@@ -27,7 +27,7 @@ S = "site-a"
 
 def verified(store: Store, user: int = 7, *, quota: QuotaClaim | None = None) -> VerifiedToken:
     return VerifiedToken(
-        site=store.site(S),
+        site=store.sites.site(S),
         scope=AccessScope(
             site_id=S,
             user_id=user,
@@ -91,14 +91,14 @@ class TestTurns:
         assert kinds(events)[-1] == "quota"
         assert [e["seq"] for e in events] == list(range(1, len(events) + 1))
         assert all(e["turn_id"] == turn for e in events)
-        assert world.conversation(S, 7, conv).title == "Wo ist der Unterricht?"
-        assert world.turn(conv, turn).state == "done"
+        assert world.chat.conversation(S, 7, conv).title == "Wo ist der Unterricht?"
+        assert world.chat.turn(conv, turn).state == "done"
 
     async def test_live_subscribers_get_events_as_they_happen(self, world: Store) -> None:  # noqa: F811
         model = ScriptedModel(script=[AIMessage(content="Hallo")])
         svc = service(world, model)
         v = verified(world)
-        conv = world.create_conversation(S, 7)
+        conv = world.chat.create_conversation(S, 7)
         queue = svc.subscribe(conv)
         await svc.send(v, conversation_id=conv, course_id=None, text="Hi")
         await wait_done(svc, conv)
@@ -169,7 +169,7 @@ class TestTurns:
         events = svc.replay(v, conv, after_seq=0)
         assert "error" in kinds(events)
         assert "provider down" not in str(events)  # internals are not shown to users
-        assert world.turn(conv, turn).state == "failed"
+        assert world.chat.turn(conv, turn).state == "failed"
 
 
 class TestQuestions:
@@ -185,7 +185,7 @@ class TestQuestions:
         conv, turn = await svc.send(v, conversation_id=None, course_id=None, text="Prüfung?")
         await wait_done(svc, conv)
         question = next(e for e in svc.replay(v, conv, after_seq=0) if e["type"] == "question")
-        assert world.turn(conv, turn).state == "waiting"
+        assert world.chat.turn(conv, turn).state == "waiting"
         await svc.answer(
             v,
             conversation_id=conv,
@@ -196,7 +196,7 @@ class TestQuestions:
         events = svc.replay(v, conv, after_seq=question["seq"])
         assert kinds(events)[0] == "user_answer"
         assert events[-2]["type"] == "final" and events[-2]["text"] == "LF7 also."
-        assert world.turn(conv, turn).state == "done"
+        assert world.chat.turn(conv, turn).state == "done"
 
     async def test_question_survives_a_restart(self, world: Store) -> None:  # noqa: F811
         script = [
@@ -240,11 +240,11 @@ class TestRecovery:
     ) -> None:
         model = ScriptedModel(script=[AIMessage(content="weiter geht's")])
         v = verified(world)
-        conv = world.create_conversation(S, 7)
-        world.start_turn(S, 7, conv, "dead-turn")  # a crash left it "running"
+        conv = world.chat.create_conversation(S, 7)
+        world.chat.start_turn(S, 7, conv, "dead-turn")  # a crash left it "running"
         svc = service(world, model)
         await svc.recover()
-        assert world.turn(conv, "dead-turn").state == "interrupted"
+        assert world.chat.turn(conv, "dead-turn").state == "interrupted"
         assert kinds(svc.replay(v, conv, after_seq=0)) == ["turn_interrupted"]
 
     async def test_cancel(self, world: Store) -> None:  # noqa: F811
@@ -261,7 +261,7 @@ class TestRecovery:
         await asyncio.wait_for(started.wait(), 2)
         await svc.cancel(v, conversation_id=conv)
         await wait_done(svc, conv)
-        assert world.turn(conv, turn).state == "cancelled"
+        assert world.chat.turn(conv, turn).state == "cancelled"
         assert kinds(svc.replay(v, conv, after_seq=0))[-1] == "cancelled"
 
 
@@ -347,7 +347,7 @@ def tokens(*deltas: str) -> list[Any]:
 
 
 def stored(store: Store, conv: str) -> list[dict[str, Any]]:
-    return [e for _, e in store.events(S, 7, conv)]
+    return [e for _, e in store.chat.events(S, 7, conv)]
 
 
 def drain(queue: asyncio.Queue[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -365,7 +365,7 @@ class TestStreamedRuns:
         runner = ScriptedRunner([*tokens("Hal", "lo", " Welt"), FinalEvent(text="Hallo Welt")])
         svc = scripted(world, runner)
         v = verified(world)
-        conv = world.create_conversation(S, 7)
+        conv = world.chat.create_conversation(S, 7)
         queue = svc.subscribe(conv)
         await svc.send(v, conversation_id=conv, course_id=None, text="Hi")
         await wait_done(svc, conv)
@@ -440,7 +440,7 @@ class TestStreamedRuns:
             ("token", "halb"),
             ("cancelled", None),
         ]
-        assert world.turn(conv, turn).state == "cancelled"
+        assert world.chat.turn(conv, turn).state == "cancelled"
 
     async def test_checkpoints_are_pruned_when_a_turn_ends(self, world: Store) -> None:  # noqa: F811
         runner = ScriptedRunner([FinalEvent(text="ok")])
@@ -458,6 +458,6 @@ class TestStreamedRuns:
         v = verified(world)
         conv, _ = await svc.send(v, conversation_id=None, course_id=None, text="Wo?")
         await wait_done(svc, conv)
-        storage, _, _ = world.ckpt_rows(thread_id_for(S, 7, conv))
+        storage, _, _ = world.checkpoints.ckpt_rows(thread_id_for(S, 7, conv))
         namespaces = [r["ns"] for r in storage]
         assert len(namespaces) == len(set(namespaces))

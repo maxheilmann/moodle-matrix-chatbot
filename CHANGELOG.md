@@ -6,6 +6,17 @@ hashes point at the commits. The project has no git tags yet, so a "release" is 
 
 ## Unreleased
 
+### Changed
+
+- **Internal, no change for users or the API:** the three largest files were split by
+  responsibility. `index/store.py` (2,180 lines) is now the package `index/store/` with one
+  repository per area (`store.sites.add_site(...)`, `store.chat.events(...)`, ...); the plugin's
+  `chat.js` (1,722 lines) is a controller plus nine parts (`turn`, `questions`, `toolcards`,
+  `links`, `conversations`, `quota`, `citations`, `layout`, `util`); the live event log left
+  `ChatService` (`chat/events.py`) and the embedding loop left `Pipeline`
+  (`ingest/embedding.py`). The websocket and REST formats, the database schema and everything
+  sealed in it are unchanged. See `docs/REFACTORING.md` (R5, R7 to R9).
+
 ### Added
 
 - The API reference (`/docs`, `/redoc`, `/openapi.json`) now documents every operation:
@@ -13,7 +24,7 @@ hashes point at the commits. The project has no git tags yet, so a "release" is 
   401, 403 and route-specific error responses, typed response bodies, and a description for
   every parameter and field. The chat websocket protocol is part of the introduction.
   `tests/unit/test_openapi_docs.py` keeps it that way.
-- CI job "Plugin JavaScript — unit tests" runs the 112 plugin JavaScript tests on Node 24.
+- CI job "Plugin JavaScript — unit tests" runs the plugin JavaScript tests on Node 24 (129 now; new tests for `util`, `links` and the token budget).
 
 ## 0.2.0 — Moodle-native rebuild (2026-11-10 to 2026-11-18)
 
