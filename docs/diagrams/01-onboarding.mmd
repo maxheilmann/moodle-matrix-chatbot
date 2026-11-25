@@ -1,0 +1,71 @@
+sequenceDiagram
+  autonumber
+  box rgb(254,205,211) People
+    actor Op as Operator
+    actor Adm as Moodle admin
+  end
+  box rgb(254,215,170) Moodle
+    participant Cron as Moodle cron and task runner
+  end
+  box rgb(253,240,138) Moodle plugin local_llmchat
+    participant Set as Plugin settings and sync tasks
+  end
+  box rgb(187,247,208) Python server moodle_llm_chat
+    participant CLI as Server CLI
+    participant API as API ingest routes
+    participant DB as Encrypted store
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over Op,DB: PHASE 1 - Operator registers the Moodle site on the Python server
+    Op->>CLI: gen-master-key once, then site add with the Moodle URL
+    CLI->>DB: add_site and generate a random site secret
+    DB-->>CLI: site secret
+    CLI-->>Op: prints the secret
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over Adm,DB: PHASE 2 - Admin connects the plugin to the API
+    Adm->>Set: enters API URL and site secret
+    Set->>Set: validates the URL
+    Adm->>Set: presses Test connection
+    Set->>API: GET ingest status with bearer site secret
+    API->>DB: authenticate_site with the secret
+    alt secret is valid
+      DB-->>API: Site
+      API-->>Set: content counts and pipeline status
+      Set-->>Adm: connection OK
+      Set->>Cron: queue push_policy_task
+      Cron->>Set: run push_policy_task
+      Set->>API: PUT quota policy
+    else unknown or revoked secret
+      API-->>Set: 401 unauthorized
+      Set-->>Adm: connection failed
+    end
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over Adm,API: PHASE 3 - First import
+    Adm->>Set: presses Run full import now
+    Set->>Cron: queue run_full_sync_task
+    Cron->>Set: runs the full sync, see chart 2
+    Set->>API: pushes the content
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over Op,DB: PHASE 4 - Secret rotation without downtime
+    Op->>CLI: site rotate
+    CLI->>DB: rotate_site_secret with a grace period
+    DB-->>CLI: new secret, the old one stays valid during the grace period
+    CLI-->>Op: prints the new secret
+    Adm->>Set: pastes the new secret
+    Set->>API: requests with the new secret
+    API->>DB: authenticate_site accepts every currently valid secret
+    Note over API,DB: chat tokens also verify against every valid secret, so open chats keep working
+    Note over DB: after the grace period only the new secret remains
+    opt operator revokes the site
+      Op->>CLI: site revoke
+      CLI->>DB: revoke_site
+      Note over API,DB: all requests and chat tokens for the site are rejected
+    end
+  end

@@ -16,6 +16,7 @@ ruff format --check .
 mypy
 pytest -m "not integration and not e2e" --cov=moodle_llm_chat --cov-report=term-missing
 pytest -m integration
+node --test moodle/local_llmchat/tests/js/*.test.mjs   # Node 22.15+, no npm install
 ```
 
 Run all of these check commands yourself before pushing — not a subset, and not just
@@ -109,7 +110,20 @@ instead of in a CI run.
    card or question, so assert on the whole message body, not the first text
    region. The runner enforces `--timeout=120` and CI `timeout-minutes: 30`.
 
-10. **The interaction wire format is a contract with the plugin** (`question` /
+10. **The plugin's JavaScript has its own CI job** (`js-unit`): `node --test` over
+    `moodle/local_llmchat/tests/js/*.test.mjs`. Pass the glob, not the directory (Node 22+
+    treats a directory as a file and fails), and use Node 22.15 or newer, because
+    `markdown.test.mjs` needs `module.registerHooks`.
+
+11. **The API reference is generated and tested.** `/docs`, `/redoc` and `/openapi.json` come
+    from the routes, and `tests/unit/test_openapi_docs.py` fails on a route without a
+    description, a written summary, its credentials, its 401/403 responses or its documented
+    errors, on a parameter or model field without a `description`, and on an untyped success
+    body. A new route needs a typed response model and `Field(description=...)` on its
+    fields. The websocket cannot be described by OpenAPI, so its protocol is the docstring of
+    `web/routes/chat_ws.py`, which `web/api_docs.py` copies into the API introduction.
+
+12. **The interaction wire format is a contract with the plugin** (`question` /
     `options` / `multi_select`, answers `{text, selected}`, `{confirmed}`, `{id}`),
     pinned by `tests/unit/test_interaction_wire.py`. Change both sides together. The same
     goes for tool-card **display blocks** (`agent/tools/display.py` ↔
@@ -126,6 +140,7 @@ ruff format --check .         # a separate check from the line above — see #1
 mypy
 pytest -m "not integration and not e2e" --cov=moodle_llm_chat --cov-report=term-missing
 pytest -m integration
+node --test moodle/local_llmchat/tests/js/*.test.mjs
 ```
 
 All must be clean before pushing.

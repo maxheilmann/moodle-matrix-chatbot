@@ -36,6 +36,7 @@ from moodle_llm_chat.llm.embed import CachingEmbedder
 from moodle_llm_chat.llm.factory import build_chat_model, build_embeddings
 from moodle_llm_chat.llm.ocr import VisionOCR
 from moodle_llm_chat.quota.service import QuotaService
+from moodle_llm_chat.web.api_docs import OPENAPI_TAGS, api_description
 from moodle_llm_chat.web.limits import BurstLimiter, SiteCORS, site_origin
 from moodle_llm_chat.web.routes import chat_ws, conversations, ingest, quota, site_admin
 
@@ -206,7 +207,13 @@ def create_app(
                         await chat.shutdown()
                     await pipeline.stop()
 
-    app = FastAPI(title="moodle-llm-chat", version=__version__, lifespan=lifespan)
+    app = FastAPI(
+        title="moodle-llm-chat",
+        version=__version__,
+        description=api_description(),
+        openapi_tags=OPENAPI_TAGS,
+        lifespan=lifespan,
+    )
     app.state.settings = settings
     app.state.start_workers = start_workers
     app.state.registry = registry
@@ -228,8 +235,10 @@ def create_app(
 
     app.add_middleware(SiteCORS, allowed_origins=allowed_origins)
 
-    @app.get("/healthz")
+    @app.get("/healthz", tags=["health"], summary="Check that the service is running")
     async def healthz() -> dict[str, Any]:
+        """Needs no credentials. Returns `status`, the service `version`, and whether the
+        `chat` service is available (it is not when no chat model is configured)."""
         return {
             "status": "ok",
             "version": __version__,

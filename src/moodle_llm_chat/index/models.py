@@ -21,20 +21,23 @@ class DocumentKind(StrEnum):
 
 
 class FileRef(BaseModel):
-    sha256: str = Field(pattern=_SHA256_HEX)
-    filename: str
-    mimetype: str | None = None
-    filesize: int = Field(default=0, ge=0)
+    sha256: str = Field(
+        pattern=_SHA256_HEX,
+        description="Lower-case hex SHA-256 of the file; upload it to `/ingest/blobs/{sha256}`.",
+    )
+    filename: str = Field(description="The file's name in Moodle.")
+    mimetype: str | None = Field(default=None, description="MIME type as Moodle reports it.")
+    filesize: int = Field(default=0, ge=0, description="Size in bytes.")
 
 
 class CourseIn(BaseModel):
-    course_id: int
-    fullname: str
-    shortname: str
-    visible: bool = True
-    startdate: int = 0
-    enddate: int = 0
-    timemodified: int = 0
+    course_id: int = Field(description="Moodle course id.")
+    fullname: str = Field(description="Full course name.")
+    shortname: str = Field(description="Short course name.")
+    visible: bool = Field(default=True, description="Whether the course is visible to students.")
+    startdate: int = Field(default=0, description="Course start, Unix seconds; 0 if not set.")
+    enddate: int = Field(default=0, description="Course end, Unix seconds; 0 if not set.")
+    timemodified: int = Field(default=0, description="Last change in Moodle, Unix seconds.")
 
 
 class DocumentIn(BaseModel):
@@ -47,25 +50,45 @@ class DocumentIn(BaseModel):
     placement and keeps the extracted content.
     """
 
-    doc_id: str = Field(min_length=1, max_length=255)
-    course_id: int
-    section_id: int = 0
-    section_name: str = ""
-    section_order: int = 0
-    cmid: int
-    modname: str = ""
-    module_name: str = ""
-    title: str = ""
-    kind: DocumentKind
-    header_path: list[str] = Field(default_factory=list)
-    module_url: str | None = None
-    timemodified: int = 0
-    text: str | None = None
-    file: FileRef | None = None
-    external_url: str | None = None
-    content_hash: str = Field(min_length=1, max_length=128)
+    doc_id: str = Field(
+        min_length=1, max_length=255, description="Document id, `{course_id}:{cmid}:{part}`."
+    )
+    course_id: int = Field(description="Moodle id of the course the document belongs to.")
+    section_id: int = Field(default=0, description="Moodle id of the course section.")
+    section_name: str = Field(default="", description="Name of the course section.")
+    section_order: int = Field(default=0, description="Position of the section in the course.")
+    cmid: int = Field(description="Moodle course-module id; what the access check is made on.")
+    modname: str = Field(default="", description="Moodle module type, e.g. `resource` or `page`.")
+    module_name: str = Field(default="", description="Name of the module in the course.")
+    title: str = Field(default="", description="Title shown when the document is cited.")
+    kind: DocumentKind = Field(
+        description="How the content arrives: `inline` text, `html`, an uploaded `file`, or an "
+        "`external` URL the server fetches itself."
+    )
+    header_path: list[str] = Field(
+        default_factory=list, description="Headings above the content, outermost first."
+    )
+    module_url: str | None = Field(default=None, description="Link to the module in Moodle.")
+    timemodified: int = Field(default=0, description="Last change in Moodle, Unix seconds.")
+    text: str | None = Field(
+        default=None, description="The content itself; required for `inline` and `html`."
+    )
+    file: FileRef | None = Field(default=None, description="The file; required for `file`.")
+    external_url: str | None = Field(
+        default=None, description="The URL to fetch; required for `external`."
+    )
+    content_hash: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Hash the plugin computed over the content; unchanged means not re-processed.",
+    )
     #: Older plugins send none; placement is then compared field by field.
-    placement_hash: str | None = Field(default=None, max_length=128)
+    placement_hash: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Hash of where the document sits; when only this changes the extracted "
+        "content is kept. Older plugins omit it.",
+    )
 
     @model_validator(mode="after")
     def _payload_matches_kind(self) -> DocumentIn:
@@ -172,10 +195,14 @@ class Chunk(BaseModel):
 
 
 class SyncResult(BaseModel):
-    sync_id: str
-    mode: str
-    tombstoned: list[str]
-    courses_tombstoned: list[int]
+    sync_id: str = Field(description="The sync run that was finished.")
+    mode: str = Field(description="`full` or `incremental`.")
+    tombstoned: list[str] = Field(
+        description="Ids of the documents removed because no manifest of the run listed them."
+    )
+    courses_tombstoned: list[int] = Field(
+        description="Ids of the courses removed because the run did not list them."
+    )
 
 
 class Job(BaseModel):
