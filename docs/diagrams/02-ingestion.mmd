@@ -1,0 +1,91 @@
+sequenceDiagram
+  autonumber
+  box rgb(254,205,211) People
+    actor T as Teacher
+  end
+  box rgb(254,215,170) Moodle
+    participant Core as Moodle core events, cron, files
+  end
+  box rgb(253,240,138) Moodle plugin local_llmchat
+    participant Obs as Observer and outbox
+    participant Sync as Sync incremental, full_sync, collector
+  end
+  box rgb(187,247,208) Python server moodle_llm_chat
+    participant API as API ingest routes
+    participant Pipe as Pipeline workers
+    participant DB as Encrypted store
+  end
+  box rgb(221,214,254) LLM provider
+    participant Mod as Embedding and vision models
+  end
+  box rgb(203,213,225) Other external services
+    participant Ext as YouTube, HackMD, Google Docs, Nextcloud, TaskCards
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over T,Pipe: PATH A - Incremental sync, triggered by an edit
+    T->>Core: edits an activity or uploads a file
+    Core->>Obs: course_module_updated event
+    Obs->>Obs: enqueue one outbox row per module, a newer change replaces it
+    Core->>Obs: cron runs drain_outbox_task
+    Obs->>Sync: process the due row
+    Sync->>Core: read the module and its files
+    Core-->>Sync: content and file hashes
+    Sync->>API: POST documents
+    API->>DB: upsert documents
+    API-->>Sync: changed ids and the blobs it still needs
+    loop each file the server lacks
+      Sync->>API: PUT blob by sha256
+      API->>DB: store the encrypted blob
+    end
+    API->>Pipe: documents_changed and blob_arrived
+    alt push succeeded
+      Sync->>Obs: delete the outbox row
+    else push failed
+      Sync->>Obs: attempts plus one and back off, retry later
+    end
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over Core,DB: PATH B - Full sync, scheduled or started by the admin
+    Core->>Sync: full_sync starts or resumes an open run
+    Sync->>API: POST sync start and POST courses
+    loop each course, progress saved after every course
+      Sync->>Core: collect the course
+      Core-->>Sync: documents and hashes
+      Sync->>API: POST manifest with hashes only
+      API->>DB: apply_manifest marks documents as seen
+      API-->>Sync: ids of documents it needs
+      Sync->>API: POST only the needed documents and PUT missing blobs
+      API->>Pipe: documents_changed with bulk priority
+    end
+    Sync->>API: POST sync finish
+    API->>DB: tombstone documents and courses missing from every manifest
+    API-->>Sync: result with the tombstoned ids
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over Pipe,Mod: PATH C - Processing inside the Python server
+    Pipe->>DB: claim due jobs for fetch, extract and ocr
+    alt inline text or HTML
+      Pipe->>Pipe: convert to text
+    else uploaded file
+      Pipe->>DB: read and decrypt the blob
+      Pipe->>Pipe: extract text by file type in a worker thread
+      Note over Pipe,DB: if the blob has not arrived the job waits until it does
+    else external link
+      Pipe->>Ext: fetch with per-host rate limit and retries
+      Ext-->>Pipe: transcript, page or document text
+    end
+    Pipe->>Pipe: chunk to about 1200 characters with a breadcrumb prefix
+    Pipe->>DB: store encrypted segments and chunks and update the keyword index
+    opt page is scanned or an image
+      Pipe->>Mod: OCR the page image, cached by image hash
+      Mod-->>Pipe: recognised text
+      Pipe->>DB: replace the content
+    end
+    Pipe->>DB: collect chunks without vectors across all documents
+    Pipe->>Mod: embed one batch, provider is called only on a cache miss
+    Mod-->>Pipe: vectors
+    Pipe->>DB: store vectors, document is searchable
+  end

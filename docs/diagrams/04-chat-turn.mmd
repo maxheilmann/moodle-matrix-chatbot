@@ -1,0 +1,70 @@
+sequenceDiagram
+  autonumber
+  box rgb(254,205,211) People
+    actor U as User
+  end
+  box rgb(191,219,254) Browser
+    participant B as Chat page
+  end
+  box rgb(187,247,208) Python server moodle_llm_chat
+    participant C as Chat service websocket
+    participant A as Agent runner LangGraph
+    participant T as Tools and access client
+    participant DB as Encrypted store and quota
+  end
+  box rgb(221,214,254) LLM provider
+    participant LLM as Chat model
+  end
+  box rgb(253,240,138) Moodle plugin local_llmchat
+    participant CB as callback.php
+  end
+  box rgb(254,215,170) Moodle
+    participant Core as Moodle core roles and availability
+  end
+
+  U->>B: types a question
+  B->>C: send frame with a fresh chat token
+  C->>C: verify token and apply the burst limit
+  C->>DB: check quota, create conversation and turn, store the user message
+  C-->>B: accepted
+
+  par naming a new conversation
+    C->>LLM: utility model proposes a short title
+    LLM-->>C: title
+    C-->>B: title event
+  and the answer
+    C->>A: run the turn with the user's scope and the saved history
+    A->>A: build tools and system prompt for this user only
+    loop until a final answer, the step limit or the token budget forces one
+      A->>LLM: messages and tool definitions
+      LLM-->>A: streamed thinking, text and tool calls
+      A-->>C: delta events
+      C-->>B: streamed text
+      opt the model calls a tool such as search_content or read_file
+        A->>T: run the tool
+        T->>DB: search or read, restricted to modules in the token scope
+        DB-->>T: matching chunks, decrypted
+        rect rgba(34,139,230,0.10)
+          Note over T,Core: LIVE ACCESS CHECK - is the user still allowed to read these modules right now
+          T->>CB: POST check with bearer site secret and the module ids, cached 60 s, circuit breaker after 3 failures
+          CB->>Core: which of these modules are visible to this user now
+          Core-->>CB: visible subset
+          CB-->>T: allowed module ids
+        end
+        alt Moodle cannot be reached
+          T-->>A: error result, nothing is shown to the model
+        else access confirmed
+          T-->>A: numbered hits with citations and display blocks
+        end
+        A-->>C: tool call and tool result events
+        C-->>B: tool card with sources
+      end
+      A-->>C: token usage
+      C->>DB: record tokens and check the turn budget
+    end
+    A-->>C: final answer with citations
+  end
+
+  C->>DB: store events, save citations, mark the turn done, prune old checkpoints
+  C-->>B: final event
+  B-->>U: answer with clickable source cards

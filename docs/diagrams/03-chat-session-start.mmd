@@ -1,0 +1,69 @@
+sequenceDiagram
+  autonumber
+  box rgb(254,205,211) People
+    actor U as User
+  end
+  box rgb(191,219,254) Browser
+    participant B as Chat page chat.js and socket.js
+  end
+  box rgb(254,215,170) Moodle
+    participant Core as Moodle core login, roles, availability
+  end
+  box rgb(253,240,138) Moodle plugin local_llmchat
+    participant Iss as Token issuer issue_token, scope_builder, jwt
+  end
+  box rgb(187,247,208) Python server moodle_llm_chat
+    participant WS as API websocket endpoint
+    participant Ver as API verify_chat_token
+    participant DB as Encrypted store
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over U,Iss: PHASE 1 - Token generation, inside Moodle
+    U->>B: opens the chat page
+    B->>Core: AJAX call local_llmchat_issue_token with the course id
+    Core->>Core: require login and reject guests
+    Core->>Iss: execute, capability local/llmchat:use is required
+    Iss->>Core: scope_builder asks which courses and modules this user can see, and their roles
+    Core-->>Iss: visible courses, module ids and role archetypes
+    Iss->>Iss: add capabilities and the quota claim from site policy and per-user override
+    Iss->>Iss: sign HS256 with a key derived by HKDF from the site secret, header kid is the site id, lifetime at most 15 minutes
+    Iss-->>B: token, expiry and websocket URL
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over B,WS: PHASE 2 - Opening the websocket
+    B->>WS: opens wss /ws/chat
+    WS->>WS: requires TLS when configured
+    B->>WS: first frame must be auth with the token, within 10 seconds
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over WS,DB: PHASE 3 - Token verification, inside the Python server
+    WS->>Ver: verify_chat_token with consume
+    Ver->>Ver: header parses, algorithm is HS256, kid is present
+    Ver->>DB: look up the site
+    DB-->>Ver: site, rejected if unknown or revoked
+    Ver->>DB: list the currently valid secrets, several during a rotation
+    Ver->>Ver: derive the key and decode, checking signature, issuer, expiry with 30 s leeway and required claims
+    Ver->>Ver: lifetime must not exceed the maximum
+    Ver->>DB: consume the jti, a repeated jti is a replay
+    Ver->>Ver: build AccessScope, UserProfile and QuotaClaim
+    Ver-->>WS: VerifiedToken
+    alt token valid
+      WS->>WS: Origin must equal the Moodle site origin, at most 3 connections per user
+      WS-->>B: ready with tool manifest and user name
+      B-->>U: chat is enabled
+    else invalid, expired, replayed or wrong origin
+      WS-->>B: close with code 4401, 4403 or 4429
+    end
+  end
+
+  rect rgba(120,120,140,0.08)
+    Note over B,Ver: PHASE 4 - Every later message uses a fresh token
+    B->>Iss: asks Moodle for a new token before each send, answer or continue
+    Iss-->>B: new token with the user's current access
+    B->>WS: send frame carrying the new token
+    WS->>Ver: verify_chat_token with consume
+    Ver-->>WS: VerifiedToken, so a changed enrolment applies within one turn
+  end
