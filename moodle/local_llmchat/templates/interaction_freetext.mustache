@@ -26,16 +26,19 @@
         "hasoptions": false
     }
 }}
-<div class="card local-llmchat-interaction" data-region="interaction">
-    <div class="card-body">
-        <p class="local-llmchat-question">{{question}}</p>
-    <form class="input-group input-group-sm" data-region="freeform">
+<div class="local-llmchat-interaction" data-region="interaction">
+    <p class="local-llmchat-question">{{question}}</p>
+    <form class="local-llmchat-inputwrap local-llmchat-answerform" data-region="freeform">
         <label class="sr-only visually-hidden" for="{{uniqid}}-text">{{#str}} answer, local_llmchat {{/str}}</label>
-        <input type="text" class="form-control" id="{{uniqid}}-text" data-region="freetext"
+        <input type="text" class="form-control local-llmchat-input" id="{{uniqid}}-text" data-region="freetext" autocomplete="off"
             placeholder="{{#hasoptions}}{{#str}} other, local_llmchat {{/str}}{{/hasoptions}}{{^hasoptions}}{{#str}} typeanswer, local_llmchat {{/str}}{{/hasoptions}}">
-        <div class="input-group-append">
-            <button type="submit" class="btn btn-primary">{{#str}} answer, local_llmchat {{/str}}</button>
-        </div>
+        {{#multiselect}}
+        <button type="submit" class="btn btn-primary local-llmchat-answerbtn">{{#str}} answer, local_llmchat {{/str}}</button>
+        {{/multiselect}}
+        {{^multiselect}}
+        <button type="submit" class="btn btn-primary local-llmchat-iconbtn" title="{{#str}} answer, local_llmchat {{/str}}">
+            {{#pix}} send, local_llmchat {{/pix}}<span class="sr-only visually-hidden">{{#str}} answer, local_llmchat {{/str}}</span>
+        </button>
+        {{/multiselect}}
     </form>
-    </div>
 </div>

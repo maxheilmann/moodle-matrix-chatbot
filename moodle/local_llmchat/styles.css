@@ -472,10 +472,28 @@ body.local-llmchat-fullpage #page.drawers .main-inner {
     animation-delay: .4s;
 }
 
-/* Interactions. */
+/* Interactions. The question sits in the card of the tool call that asked it (one box), tinted like
+   the expanded tool details; the answer options and the field stay white on top of the tint. */
 .local-llmchat-interaction {
-    margin: .25rem 0 .75rem;
-    border-color: var(--llmchat-accent-line);
+    margin: .625rem 0 .25rem;
+    padding: .875rem 1rem 1rem;
+    border-radius: .5rem;
+    background: var(--llmchat-accent-soft);
+    font-size: 1rem;
+}
+
+.local-llmchat-interaction.local-llmchat-collapsing {
+    margin: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: height .25s ease, padding .25s ease, margin .25s ease, opacity .2s ease;
+}
+
+/* While a question waits, the group stands out a little from the page. */
+.local-llmchat .local-llmchat-tools:has(.local-llmchat-asking) {
+    box-shadow: 0 0 0 1px var(--llmchat-accent-line);
 }
 
 .local-llmchat-question {
@@ -489,9 +507,94 @@ body.local-llmchat-fullpage #page.drawers .main-inner {
     margin-bottom: .75rem;
 }
 
+.local-llmchat-confirm {
+    margin-bottom: 0;
+}
+
+/* Answer choices: one per row, so long options read as a list instead of a ragged row of pills.
+   They share the composer's radius and border. */
+.local-llmchat-optionlist {
+    display: flex;
+    flex-direction: column;
+    gap: .375rem;
+    margin-bottom: .75rem;
+}
+
+.local-llmchat .local-llmchat-option {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: .5rem .875rem;
+    border: 1px solid var(--llmchat-border);
+    border-radius: .75rem;
+    background: var(--bs-body-bg, #fff);
+    color: inherit;
+    font: inherit;
+    font-weight: 400;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .15s ease-in-out, box-shadow .15s ease-in-out, color .15s ease-in-out;
+}
+
+.local-llmchat .local-llmchat-option:hover {
+    border-color: var(--llmchat-accent);
+    color: var(--llmchat-accent);
+}
+
+.local-llmchat .local-llmchat-option:focus-visible,
+.local-llmchat .local-llmchat-option:focus-within {
+    border-color: var(--llmchat-accent);
+    box-shadow: 0 0 0 .2rem var(--llmchat-accent-soft);
+    outline: 0;
+}
+
+/* Multi-select: the whole row is the checkbox; a ticked row carries the accent border. */
+.local-llmchat .local-llmchat-optioncheck {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+}
+
+.local-llmchat-checkbox {
+    flex-shrink: 0;
+    width: 1.125rem;
+    height: 1.125rem;
+    margin: 0;
+    accent-color: var(--llmchat-accent);
+}
+
+.local-llmchat .local-llmchat-optioncheck:has(:checked) {
+    border-color: var(--llmchat-accent);
+    box-shadow: inset 0 0 0 1px var(--llmchat-accent);
+}
+
+/* The free-text answer is the composer's field: same rounded wrapper, borderless input, icon button. */
+.local-llmchat-answerform {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin: 0;
+}
+
+.local-llmchat .local-llmchat-answerform .local-llmchat-input {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+}
+
+.local-llmchat .local-llmchat-answerbtn {
+    flex-shrink: 0;
+    margin: 0 .125rem 0 0;
+}
+
 .local-llmchat-answered {
     gap: .375rem;
     margin: .25rem 0 .75rem;
+}
+
+.local-llmchat-tool .local-llmchat-answered {
+    margin: .5rem 0 0;
 }
 
 .local-llmchat-answered .icon {

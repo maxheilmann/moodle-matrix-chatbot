@@ -59,3 +59,21 @@ test('chat.js only sends frames built by local_llmchat/frames', () => {
         assert.match(call[2], /token: t\.token/, `${call[1]} without token: t.token`);
     }
 });
+
+test('answerSummary rebuilds the one-line summary of a stored answer', () => {
+    const labels = {yes: 'Yes', no: 'No', label: (id) => ({a: 'Aufgabenblatt.txt'})[id] || ''};
+    assert.equal(frames.answerSummary({text: 'Nur den Termin', selected: ['Nur den Termin']}, labels), 'Nur den Termin');
+    assert.equal(frames.answerSummary({text: '', selected: ['LF7', 'LF5']}, labels), 'LF7, LF5');
+    assert.equal(frames.answerSummary({text: ' Testfrage ', selected: []}, labels), 'Testfrage');
+    assert.equal(frames.answerSummary({confirmed: true}, labels), 'Yes');
+    assert.equal(frames.answerSummary({confirmed: false}, labels), 'No');
+    assert.equal(frames.answerSummary({id: 'a'}, labels), 'Aufgabenblatt.txt');
+    assert.equal(frames.answerSummary({id: 'gone'}, labels), 'gone');
+    assert.equal(frames.answerSummary({}, labels), '');
+    assert.equal(frames.answerSummary(null, labels), '');
+});
+
+test('chat.js settles a replayed question when the stored answer follows it', () => {
+    const source = readFileSync(new URL('../../amd/src/chat.js', import.meta.url), 'utf8');
+    assert.match(source, /'user_answer': 'onUserAnswer'/);
+});

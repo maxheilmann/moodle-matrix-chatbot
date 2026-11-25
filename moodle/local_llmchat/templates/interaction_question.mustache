@@ -28,33 +28,36 @@
         "options": [{"value": "Nur den Termin", "index": 0}, {"value": "Termin und Bewertung", "index": 1}]
     }
 }}
-<div class="card local-llmchat-interaction" data-region="interaction">
-    <div class="card-body">
-        <p class="local-llmchat-question">{{question}}</p>
-        {{#hasoptions}}
-        {{^multiselect}}
-        <div class="d-flex flex-wrap local-llmchat-options">
-            {{#options}}<button type="button" class="btn btn-outline-primary btn-sm" data-action="option" data-value="{{value}}">{{value}}</button>{{/options}}
-        </div>
-        {{/multiselect}}
-        {{#multiselect}}
-        <div class="local-llmchat-options">
-            {{#options}}
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="{{uniqid}}-{{index}}" value="{{value}}" data-region="option">
-                <label class="form-check-label" for="{{uniqid}}-{{index}}">{{value}}</label>
-            </div>
-            {{/options}}
-        </div>
-        {{/multiselect}}
-        {{/hasoptions}}
-    <form class="input-group input-group-sm" data-region="freeform">
-        <label class="sr-only visually-hidden" for="{{uniqid}}-text">{{#str}} answer, local_llmchat {{/str}}</label>
-        <input type="text" class="form-control" id="{{uniqid}}-text" data-region="freetext"
-            placeholder="{{#hasoptions}}{{#str}} other, local_llmchat {{/str}}{{/hasoptions}}{{^hasoptions}}{{#str}} typeanswer, local_llmchat {{/str}}{{/hasoptions}}">
-        <div class="input-group-append">
-            <button type="submit" class="btn btn-primary">{{#str}} answer, local_llmchat {{/str}}</button>
-        </div>
-    </form>
+<div class="local-llmchat-interaction" data-region="interaction">
+    <p class="local-llmchat-question">{{question}}</p>
+    {{#hasoptions}}
+    {{^multiselect}}
+    <div class="local-llmchat-optionlist">
+        {{#options}}<button type="button" class="local-llmchat-option" data-action="option" data-value="{{value}}">{{value}}</button>{{/options}}
     </div>
+    {{/multiselect}}
+    {{#multiselect}}
+    <div class="local-llmchat-optionlist">
+        {{#options}}
+        <label class="local-llmchat-option local-llmchat-optioncheck" for="{{uniqid}}-{{index}}">
+            <input class="local-llmchat-checkbox" type="checkbox" id="{{uniqid}}-{{index}}" value="{{value}}" data-region="option">
+            <span>{{value}}</span>
+        </label>
+        {{/options}}
+    </div>
+    {{/multiselect}}
+    {{/hasoptions}}
+    <form class="local-llmchat-inputwrap local-llmchat-answerform" data-region="freeform">
+        <label class="sr-only visually-hidden" for="{{uniqid}}-text">{{#str}} answer, local_llmchat {{/str}}</label>
+        <input type="text" class="form-control local-llmchat-input" id="{{uniqid}}-text" data-region="freetext" autocomplete="off"
+            placeholder="{{#hasoptions}}{{#str}} other, local_llmchat {{/str}}{{/hasoptions}}{{^hasoptions}}{{#str}} typeanswer, local_llmchat {{/str}}{{/hasoptions}}">
+        {{#multiselect}}
+        <button type="submit" class="btn btn-primary local-llmchat-answerbtn">{{#str}} answer, local_llmchat {{/str}}</button>
+        {{/multiselect}}
+        {{^multiselect}}
+        <button type="submit" class="btn btn-primary local-llmchat-iconbtn" title="{{#str}} answer, local_llmchat {{/str}}">
+            {{#pix}} send, local_llmchat {{/pix}}<span class="sr-only visually-hidden">{{#str}} answer, local_llmchat {{/str}}</span>
+        </button>
+        {{/multiselect}}
+    </form>
 </div>

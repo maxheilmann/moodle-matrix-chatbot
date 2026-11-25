@@ -28,16 +28,14 @@
         ]
     }
 }}
-<div class="card local-llmchat-interaction" data-region="interaction">
-    <div class="card-body">
-        <p class="local-llmchat-question">{{question}}</p>
-        <div class="list-group">
-            {{#items}}
-            <button type="button" class="list-group-item list-group-item-action" data-action="choose" data-id="{{id}}">
-                <span class="d-block">{{label}}</span>
-                {{#description}}<span class="d-block small text-muted">{{description}}</span>{{/description}}
-            </button>
-            {{/items}}
-        </div>
+<div class="local-llmchat-interaction" data-region="interaction">
+    <p class="local-llmchat-question">{{question}}</p>
+    <div class="local-llmchat-optionlist">
+        {{#items}}
+        <button type="button" class="local-llmchat-option" data-action="choose" data-id="{{id}}">
+            <span class="d-block">{{label}}</span>
+            {{#description}}<span class="d-block small text-muted">{{description}}</span>{{/description}}
+        </button>
+        {{/items}}
     </div>
 </div>

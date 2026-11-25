@@ -25,13 +25,11 @@
         "explanation": "Das kann nicht rückgängig gemacht werden."
     }
 }}
-<div class="card local-llmchat-interaction" data-region="interaction">
-    <div class="card-body">
-        <p class="local-llmchat-question">{{question}}</p>
-        {{#explanation}}<p class="small text-muted">{{explanation}}</p>{{/explanation}}
-        <div class="d-flex local-llmchat-options">
-            <button type="button" class="btn btn-primary btn-sm" data-action="confirm" data-value="1">{{#str}} confirm:yes, local_llmchat {{/str}}</button>
-            <button type="button" class="btn btn-outline-secondary btn-sm" data-action="confirm" data-value="0">{{#str}} confirm:no, local_llmchat {{/str}}</button>
-        </div>
+<div class="local-llmchat-interaction" data-region="interaction">
+    <p class="local-llmchat-question">{{question}}</p>
+    {{#explanation}}<p class="small text-muted">{{explanation}}</p>{{/explanation}}
+    <div class="d-flex local-llmchat-options local-llmchat-confirm">
+        <button type="button" class="btn btn-primary btn-sm" data-action="confirm" data-value="1">{{#str}} confirm:yes, local_llmchat {{/str}}</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-action="confirm" data-value="0">{{#str}} confirm:no, local_llmchat {{/str}}</button>
     </div>
 </div>
