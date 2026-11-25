@@ -91,10 +91,10 @@ async def site_auth(
     token = bearer_token(request)
     if token is None:
         raise UNAUTHORIZED
-    site = store.authenticate_site(token)
+    site = store.sites.authenticate_site(token)
     if site is None:
         raise UNAUTHORIZED
-    store.touch_site(site.site_id)
+    store.sites.touch_site(site.site_id)
     return site
 
 

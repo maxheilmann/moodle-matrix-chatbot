@@ -42,7 +42,6 @@ from moodle_llm_chat.agent.checkpoint import thread_id_for
 from moodle_llm_chat.agent.citations import CitationRef, CitationRegistry
 from moodle_llm_chat.agent.context import AccessChecker, RunContext
 from moodle_llm_chat.agent.events import (
-    STREAMED,
     CancelledEvent,
     ErrorEvent,
     FinalEvent,
@@ -55,6 +54,7 @@ from moodle_llm_chat.agent.events import (
     UserMessageEvent,
 )
 from moodle_llm_chat.agent.runner import AgentRunner
+from moodle_llm_chat.chat.events import EventLog
 from moodle_llm_chat.chat.titles import TITLE_CHARS, TitleGenerator
 from moodle_llm_chat.config import AgentSection
 from moodle_llm_chat.index.search import Searcher
@@ -64,7 +64,6 @@ from moodle_llm_chat.quota.service import QuotaExceeded, QuotaService
 log = structlog.get_logger(__name__)
 
 MAX_MESSAGE_CHARS = 10_000
-QUEUE_SIZE = 1000
 #: How long a first turn's ``final`` waits for the generated title.
 TITLE_WAIT_S = 5.0
 
@@ -105,9 +104,7 @@ class ChatService:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         #: Title generation in flight, per conversation.
         self._title_tasks: dict[str, asyncio.Task[None]] = {}
-        self._subs: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
-        #: The streamed run being published per conversation, not stored yet.
-        self._runs: dict[str, list[dict[str, Any]]] = {}
+        self.events = EventLog(store)
         self._shutting_down = False
 
     # ------------------------------------------------------------------ #
@@ -115,78 +112,22 @@ class ChatService:
     # ------------------------------------------------------------------ #
 
     def subscribe(self, conversation_id: str) -> asyncio.Queue[dict[str, Any]]:
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=QUEUE_SIZE)
-        self._subs.setdefault(conversation_id, set()).add(queue)
-        return queue
+        return self.events.subscribe(conversation_id)
 
     def unsubscribe(self, conversation_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
-        subs = self._subs.get(conversation_id)
-        if subs is not None:
-            subs.discard(queue)
-            if not subs:
-                del self._subs[conversation_id]
+        self.events.unsubscribe(conversation_id, queue)
 
     def replay(
         self, v: VerifiedToken, conversation_id: str, *, after_seq: int
     ) -> list[dict[str, Any]]:
         try:
-            stored = self.store.events(
-                v.site.site_id, v.scope.user_id, conversation_id, after_seq=after_seq
-            )
+            return self.events.history(v, conversation_id, after_seq=after_seq)
         except StoreError as exc:
             raise ChatError("not_found", "Unterhaltung nicht gefunden.") from exc
-        buffered = [e for e in self._runs.get(conversation_id, ()) if e["seq"] > after_seq]
-        return [event for _, event in stored] + buffered
 
     def is_running(self, conversation_id: str) -> bool:
         task = self._tasks.get(conversation_id)
         return task is not None and not task.done()
-
-    def _publish(self, v: VerifiedToken, conversation_id: str, event: dict[str, Any]) -> None:
-        event = dict(event, seq=self.store.next_seq(conversation_id))
-        run = self._runs.get(conversation_id)
-        if run and (
-            event["type"] != run[-1]["type"] or event.get("turn_id") != run[-1].get("turn_id")
-        ):
-            self._flush(v, conversation_id)
-        if event["type"] in STREAMED:
-            self._runs.setdefault(conversation_id, []).append(event)
-        else:
-            self._store(v, conversation_id, event)
-        for queue in list(self._subs.get(conversation_id, ())):
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                # A stuck client: drop it; it will resume from its last seq on reconnect.
-                self.unsubscribe(conversation_id, queue)
-
-    def _flush(self, v: VerifiedToken, conversation_id: str) -> None:
-        """Store the buffered streamed run as one event carrying the last delta's seq.
-
-        Its deltas went out with consecutive seqs (nothing else is published in between);
-        ``parts`` records their lengths so a client that saw part of the run live can be
-        sent just the rest (see :meth:`Store.events`).
-        """
-        run = self._runs.pop(conversation_id, None)
-        if not run:
-            return
-        deltas = [e.get("delta") for e in run]
-        merged = dict(
-            run[-1],
-            delta=None if all(d is None for d in deltas) else "".join(d or "" for d in deltas),
-            parts=[len(d or "") for d in deltas],
-        )
-        self._store(v, conversation_id, merged)
-
-    def _store(self, v: VerifiedToken, conversation_id: str, event: dict[str, Any]) -> None:
-        self.store.append_event(
-            v.site.site_id,
-            v.scope.user_id,
-            conversation_id,
-            event.get("turn_id", ""),
-            event,
-            seq=event["seq"],
-        )
 
     # ------------------------------------------------------------------ #
     # Commands
@@ -194,7 +135,7 @@ class ChatService:
 
     def _own(self, v: VerifiedToken, conversation_id: str) -> None:
         try:
-            self.store.conversation(v.site.site_id, v.scope.user_id, conversation_id)
+            self.store.chat.conversation(v.site.site_id, v.scope.user_id, conversation_id)
         except StoreError as exc:
             raise ChatError("not_found", "Unterhaltung nicht gefunden.") from exc
 
@@ -229,27 +170,31 @@ class ChatService:
         site_id, user_id = v.site.site_id, v.scope.user_id
         if conversation_id is None:
             self._check_quota(v)
-            conversation_id = self.store.create_conversation(site_id, user_id, course_id=course_id)
+            conversation_id = self.store.chat.create_conversation(
+                site_id, user_id, course_id=course_id
+            )
         else:
             self._own(v, conversation_id)
             if client_msg_id:
-                existing = self.store.turn_for_client_message(conversation_id, client_msg_id)
+                existing = self.store.chat.turn_for_client_message(conversation_id, client_msg_id)
                 if existing is not None:
                     return conversation_id, existing
-            if self.store.running_turn(conversation_id) is not None or self.is_running(
+            if self.store.chat.running_turn(conversation_id) is not None or self.is_running(
                 conversation_id
             ):
                 raise ChatError("busy", "In dieser Unterhaltung läuft bereits eine Antwort.")
             self._check_quota(v)
 
         turn_id = secrets.token_urlsafe(9)
-        self.store.start_turn(
+        self.store.chat.start_turn(
             site_id, user_id, conversation_id, turn_id, client_msg_id=client_msg_id
         )
-        untitled = not self.store.conversation(site_id, user_id, conversation_id).title
+        untitled = not self.store.chat.conversation(site_id, user_id, conversation_id).title
         if untitled:
-            self.store.set_conversation_title(site_id, user_id, conversation_id, text[:TITLE_CHARS])
-        self._publish(
+            self.store.chat.set_conversation_title(
+                site_id, user_id, conversation_id, text[:TITLE_CHARS]
+            )
+        self.events.publish(
             v,
             conversation_id,
             UserMessageEvent(
@@ -275,13 +220,13 @@ class ChatService:
         self._own(v, conversation_id)
         if self.is_running(conversation_id):
             raise ChatError("busy", "Die Antwort läuft noch.")
-        turn_id = self.store.running_turn(conversation_id)
+        turn_id = self.store.chat.running_turn(conversation_id)
         pending = self._pending_question(v, conversation_id)
         if turn_id is None or pending is None or pending["interrupt_id"] != interrupt_id:
             raise ChatError("no_question", "Es gibt keine offene Rückfrage dazu.")
         self._check_quota(v)
-        self.store.set_turn_state(turn_id, "running")
-        self._publish(
+        self.store.chat.set_turn_state(turn_id, "running")
+        self.events.publish(
             v,
             conversation_id,
             UserAnswerEvent(
@@ -295,13 +240,13 @@ class ChatService:
         """Resume a turn that a restart interrupted, from its last checkpoint."""
         self._own(v, conversation_id)
         try:
-            turn = self.store.turn(conversation_id, turn_id)
+            turn = self.store.chat.turn(conversation_id, turn_id)
         except StoreError as exc:
             raise ChatError("not_found", "Antwort nicht gefunden.") from exc
         if turn.state != "interrupted" or self.is_running(conversation_id):
             raise ChatError("not_interrupted", "Diese Antwort kann nicht fortgesetzt werden.")
         self._check_quota(v)
-        self.store.set_turn_state(turn_id, "running")
+        self.store.chat.set_turn_state(turn_id, "running")
         self._spawn(v, conversation_id, turn_id, continue_turn=True)
 
     async def cancel(self, v: VerifiedToken, *, conversation_id: str) -> None:
@@ -310,10 +255,10 @@ class ChatService:
         if task is not None and not task.done():
             task.cancel()
             return
-        turn_id = self.store.running_turn(conversation_id)
+        turn_id = self.store.chat.running_turn(conversation_id)
         if turn_id is not None:  # a waiting question: cancelling closes it
-            self.store.set_turn_state(turn_id, "cancelled")
-            self._publish(
+            self.store.chat.set_turn_state(turn_id, "cancelled")
+            self.events.publish(
                 v, conversation_id, CancelledEvent(turn_id=turn_id).model_dump(mode="json")
             )
 
@@ -331,8 +276,8 @@ class ChatService:
     # ------------------------------------------------------------------ #
 
     async def recover(self) -> None:
-        for site_id, user_id, conversation_id, turn_id in self.store.interrupt_running_turns():
-            self.store.append_event(
+        for site_id, user_id, conversation_id, turn_id in self.store.chat.interrupt_running_turns():
+            self.store.chat.append_event(
                 site_id,
                 user_id,
                 conversation_id,
@@ -364,11 +309,11 @@ class ChatService:
                 self.quota.record(
                     site_id, user_id, conversation_id, turn_id, usage, purpose="utility"
                 )
-            current = self.store.conversation(site_id, user_id, conversation_id).title
+            current = self.store.chat.conversation(site_id, user_id, conversation_id).title
             if not title or title == fallback or current != fallback:
                 return
-            self.store.set_conversation_title(site_id, user_id, conversation_id, title)
-            self._publish(
+            self.store.chat.set_conversation_title(site_id, user_id, conversation_id, title)
+            self.events.publish(
                 v,
                 conversation_id,
                 TitleEvent(turn_id=turn_id, title=title).model_dump(mode="json"),
@@ -406,7 +351,7 @@ class ChatService:
     def _context(self, v: VerifiedToken, conversation_id: str, course_id: int | None) -> RunContext:
         refs = [
             CitationRef.model_validate(r)
-            for r in self.store.citations(v.site.site_id, v.scope.user_id, conversation_id)
+            for r in self.store.chat.citations(v.site.site_id, v.scope.user_id, conversation_id)
         ]
         user = v.user
         if course_id is not None and user.course_context is None:
@@ -431,7 +376,7 @@ class ChatService:
         finally:
             # However the turn ended: store the run in flight, then drop the
             # checkpoints the next turn will not need.
-            self._flush(v, conversation_id)
+            self.events.flush(v, conversation_id)
             thread = thread_id_for(v.site.site_id, v.scope.user_id, conversation_id)
             try:
                 self.runner.prune_thread(thread)
@@ -472,25 +417,25 @@ class ChatService:
                     state = "waiting"
                 elif isinstance(event, FinalEvent):
                     await self._await_title(conversation_id)
-                self._publish(v, conversation_id, event.model_dump(mode="json"))
+                self.events.publish(v, conversation_id, event.model_dump(mode="json"))
         except asyncio.CancelledError:
             if self._shutting_down:
-                self.store.set_turn_state(turn_id, "interrupted")
-                self._publish(
+                self.store.chat.set_turn_state(turn_id, "interrupted")
+                self.events.publish(
                     v,
                     conversation_id,
                     TurnInterruptedEvent(turn_id=turn_id).model_dump(mode="json"),
                 )
             else:
-                self.store.set_turn_state(turn_id, "cancelled")
-                self._publish(
+                self.store.chat.set_turn_state(turn_id, "cancelled")
+                self.events.publish(
                     v, conversation_id, CancelledEvent(turn_id=turn_id).model_dump(mode="json")
                 )
             raise
         except Exception:
             log.exception("chat.turn_failed", conversation=conversation_id)
-            self.store.set_turn_state(turn_id, "failed")
-            self._publish(
+            self.store.chat.set_turn_state(turn_id, "failed")
+            self.events.publish(
                 v,
                 conversation_id,
                 ErrorEvent(
@@ -500,8 +445,8 @@ class ChatService:
                 ).model_dump(mode="json"),
             )
             return
-        self.store.set_turn_state(turn_id, state)
-        self.store.save_citations(
+        self.store.chat.set_turn_state(turn_id, state)
+        self.store.chat.save_citations(
             site_id,
             user_id,
             conversation_id,
@@ -510,7 +455,7 @@ class ChatService:
         if state != "done":
             return  # waiting for the user: the turn (and its quota summary) is not over
         status = self.quota.status(site_id, user_id, v.quota)
-        self._publish(
+        self.events.publish(
             v,
             conversation_id,
             QuotaEvent(turn_id=turn_id, **status.model_dump()).model_dump(mode="json"),

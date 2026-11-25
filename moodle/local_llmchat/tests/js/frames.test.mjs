@@ -16,7 +16,7 @@
 // Tests for local_llmchat/frames. Run: node --test moodle/local_llmchat/tests/js/*.test.mjs (Node 22.15+)
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readdirSync, readFileSync} from 'node:fs';
 import * as frames from '../../amd/src/frames.js';
 
 test('state-changing frames carry the fresh token', () => {
@@ -47,8 +47,14 @@ test('cancel and resume need no token', () => {
     assert.deepEqual(frames.resume({conversationId: 'conv'}), {type: 'resume', 'conversation_id': 'conv', 'last_seq': 0});
 });
 
-test('chat.js only sends frames built by local_llmchat/frames', () => {
-    const source = readFileSync(new URL('../../amd/src/chat.js', import.meta.url), 'utf8');
+// The chat client is split over several modules; none of them may send a frame it built itself.
+const chatSource = () => readdirSync(new URL('../../amd/src/', import.meta.url))
+    .filter((name) => name.endsWith('.js') && name !== 'markdown-it.js')
+    .map((name) => readFileSync(new URL(`../../amd/src/${name}`, import.meta.url), 'utf8'))
+    .join('\n');
+
+test('the chat client only sends frames built by local_llmchat/frames', () => {
+    const source = chatSource();
     const sends = [...source.matchAll(/\.socket\.send\(\s*([^\s(]+)/g)].map((m) => m[1]);
     assert.ok(sends.length >= 5, `found ${sends.length} sends`);
     for (const argument of sends) {
@@ -75,5 +81,5 @@ test('answerSummary rebuilds the one-line summary of a stored answer', () => {
 
 test('chat.js settles a replayed question when the stored answer follows it', () => {
     const source = readFileSync(new URL('../../amd/src/chat.js', import.meta.url), 'utf8');
-    assert.match(source, /'user_answer': 'onUserAnswer'/);
+    assert.match(source, /'user_answer': \['questions', 'onUserAnswer'\]/);
 });

@@ -223,7 +223,7 @@ class ReadFile(Tool[ReadArgs]):
         if not readable:
             return _notice(NO_ACCESS, "no_access", "warning")
         document = readable[0]
-        segments = ctx.store.segments(ctx.site.site_id, document.doc_id)
+        segments = ctx.store.chunks.segments(ctx.site.site_id, document.doc_id)
         if args.page is not None:
             segments = [s for s in segments if s.page == args.page]
             if not segments:
@@ -287,7 +287,7 @@ class ListDocuments(Tool[ListDocumentsArgs]):
         wanted = scope_doc_ids(ctx, args.path)
         docs = [
             d
-            for d in ctx.store.live_documents(ctx.site.site_id, cmids=ctx.scope.cmids)
+            for d in ctx.store.documents.live_documents(ctx.site.site_id, cmids=ctx.scope.cmids)
             if ctx.tree.path_for(d.doc_id) is not None
             and (wanted is None or d.doc_id in wanted)
             and (since is None or d.timemodified >= since)

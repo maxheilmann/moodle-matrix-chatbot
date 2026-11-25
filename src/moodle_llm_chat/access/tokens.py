@@ -70,7 +70,7 @@ def verify_chat_token(
     if not isinstance(site_id, str):
         raise TokenError("token names no site")
     try:
-        site = store.site(site_id)
+        site = store.sites.site(site_id)
     except StoreError as exc:
         raise TokenError("unknown site") from exc
     if site.revoked_at is not None:
@@ -79,7 +79,7 @@ def verify_chat_token(
     stamp = int(time.time()) if now is None else now
     claims: dict[str, Any] | None = None
     last_error: Exception | None = None
-    for secret in store.site_secrets(site_id, now=stamp):
+    for secret in store.sites.site_secrets(site_id, now=stamp):
         try:
             claims = jwt.decode(
                 token,
@@ -101,7 +101,7 @@ def verify_chat_token(
 
     if int(claims["exp"]) - int(claims["iat"]) > MAX_TOKEN_LIFETIME_S:
         raise TokenError("token lifetime too long")
-    if consume and not store.consume_jti(site_id, str(claims["jti"]), int(claims["exp"])):
+    if consume and not store.sites.consume_jti(site_id, str(claims["jti"]), int(claims["exp"])):
         raise TokenError("token replay")
 
     try:

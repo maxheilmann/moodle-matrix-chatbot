@@ -37,6 +37,7 @@ from moodle_llm_chat.config import PipelineSection
 from moodle_llm_chat.index.models import ChunkIn, Document, DocumentKind, Job, SegmentIn
 from moodle_llm_chat.index.store import Store, StoreError
 from moodle_llm_chat.ingest.chunk import Segment, chunk_segments
+from moodle_llm_chat.ingest.embedding import EmbeddingLoop
 from moodle_llm_chat.ingest.extract import (
     EXTRACT_VERSION,
     ExtractionError,
@@ -140,7 +141,6 @@ class Pipeline:
         self.settings = settings
         self._retry_base = retry_base_s
         self._fetch = external_fetch or fetch_external
-        self._embed_batch = embed_batch
         self._clock = clock
         self._hosts = _HostLimiter(settings.per_host_rate)
         self._stages = {
@@ -151,15 +151,18 @@ class Pipeline:
                 StageSpec("ocr", 5, self._run_ocr, lambda: self.settings.ocr_concurrency),
             )
         }
-        self._wake = {name: asyncio.Event() for name in (*self._stages, "embed")}
+        self._wake = {name: asyncio.Event() for name in self._stages}
         self._inflight: dict[str, set[asyncio.Task[None]]] = {n: set() for n in self._stages}
         self._loops: list[asyncio.Task[None]] = []
-        self._embed_backoff = 0.0
-        self._embed_failing = False
-        self._poisoned: dict[int, int] = {}
-        self._embedding_paused = False
-        self._ingest_gate = ingest_gate
-        self._ingest_meter = ingest_meter
+        self._embedding = EmbeddingLoop(
+            store,
+            embedder,
+            batch=embed_batch,
+            gate=ingest_gate,
+            meter=ingest_meter,
+            idle_wait_s=MAX_IDLE_WAIT_S,
+            max_backoff_s=MAX_RETRY_DELAY_S,
+        )
 
     # ------------------------------------------------------------------ #
     # Inputs
@@ -171,11 +174,11 @@ class Pipeline:
         touched: set[str] = set()
         for doc_id in doc_ids:
             try:
-                document = self.store.document(site_id, doc_id)
+                document = self.store.documents.document(site_id, doc_id)
             except StoreError:
                 continue
             stage = "fetch" if document.kind is DocumentKind.EXTERNAL else "extract"
-            self.store.enqueue_job(site_id, doc_id, stage, priority=priority, now=self._now())
+            self.store.jobs.enqueue_job(site_id, doc_id, stage, priority=priority, now=self._now())
             touched.add(stage)
         for stage in touched:
             self._wake[stage].set()
@@ -191,47 +194,40 @@ class Pipeline:
             document = self._live_document(site_id, doc_id)
             if document is None:
                 continue
-            stored = self.store.segments(site_id, doc_id)
+            stored = self.store.chunks.segments(site_id, doc_id)
             if not stored:
                 continue
             segments = [Segment(text=s.text, page=s.page, label=s.label) for s in stored]
             self._index(document, segments, allow_ocr=False)
 
     def blob_arrived(self, site_id: str, sha256: str) -> None:
-        for doc_id in self.store.documents_with_blob(site_id, sha256):
-            self.store.enqueue_job(site_id, doc_id, "extract", now=self._now())
+        for doc_id in self.store.blobs.documents_with_blob(site_id, sha256):
+            self.store.jobs.enqueue_job(site_id, doc_id, "extract", now=self._now())
         self._wake["extract"].set()
 
     def ingest_budget_changed(self) -> None:
         """Re-evaluate per-site ingest budgets (e.g. a ceiling was raised or a day began)."""
-        self._wake["embed"].set()
-
-    def _gated_sites(self) -> list[str]:
-        if self._ingest_gate is None:
-            return []
-        return [s for s in self.store.sites_with_pending_vectors() if not self._ingest_gate(s)]
+        self._embedding.wake.set()
 
     def pause_embedding(self, paused: bool) -> None:
         """Used by ingest quotas: keep chunks pending instead of spending tokens."""
-        self._embedding_paused = paused
-        if not paused:
-            self._wake["embed"].set()
+        self._embedding.pause(paused)
 
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
 
     async def start(self) -> None:
-        requeued = self.store.reset_running_jobs()
-        backlog = self.store.documents_needing_extraction(extract_version=CONTENT_VERSION)
+        requeued = self.store.jobs.reset_running_jobs()
+        backlog = self.store.documents.documents_needing_extraction(extract_version=CONTENT_VERSION)
         for d in backlog:
             stage = "fetch" if d.kind is DocumentKind.EXTERNAL else "extract"
-            self.store.enqueue_job(d.site_id, d.doc_id, stage, priority=2, now=self._now())
+            self.store.jobs.enqueue_job(d.site_id, d.doc_id, stage, priority=2, now=self._now())
         log.info("pipeline.start", requeued=requeued, backlog=len(backlog))
         for name in self._stages:
             self._loops.append(asyncio.create_task(self._stage_loop(name), name=f"stage:{name}"))
         if self.embedder is not None:
-            self._loops.append(asyncio.create_task(self._embed_loop(), name="stage:embed"))
+            self._loops.append(asyncio.create_task(self._embedding.run(), name="stage:embed"))
 
     async def stop(self) -> None:
         tasks = [*self._loops, *(t for s in self._inflight.values() for t in s)]
@@ -246,9 +242,9 @@ class Pipeline:
         """Wait until no job is due or running (and, optionally, nothing to embed)."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            busy = any(self._inflight.values()) or self.store.has_due_jobs(now=self._now())
+            busy = any(self._inflight.values()) or self.store.jobs.has_due_jobs(now=self._now())
             if not busy and include_embeddings and self.embedder is not None:
-                busy = self._embeddable_pending() > 0 and not self._embed_failing
+                busy = self._embedding.pending() > 0 and not self._embedding.failing
             if not busy:
                 return
             await asyncio.sleep(0.01)
@@ -256,10 +252,10 @@ class Pipeline:
 
     def status(self) -> dict[str, Any]:
         return {
-            "stages": self.store.job_counts(now=self._now()),
-            "pending_vectors": self.store.pending_vector_count(),
-            "embedding_paused": self._embedding_paused,
-            "embedding_failing": self._embed_failing,
+            "stages": self.store.jobs.job_counts(now=self._now()),
+            "pending_vectors": self.store.chunks.pending_vector_count(),
+            "embedding_paused": self._embedding.paused,
+            "embedding_failing": self._embedding.failing,
         }
 
     # ------------------------------------------------------------------ #
@@ -276,7 +272,7 @@ class Pipeline:
         lose those documents for good. Permanent failures (404 …) stay skipped.
         """
         self._last_failed_sweep = self._clock()
-        n = self.store.requeue_failed_jobs(
+        n = self.store.jobs.requeue_failed_jobs(
             "fetch", older_than_s=FAILED_FETCH_RETRY_AFTER_S, now=self._now()
         )
         if n:
@@ -297,7 +293,7 @@ class Pipeline:
             if name == "fetch":
                 self._sweep_failed_fetches_if_due()
             free = spec.concurrency() - len(inflight)
-            jobs = self.store.claim_jobs(name, limit=free, now=self._now()) if free > 0 else []
+            jobs = self.store.jobs.claim_jobs(name, limit=free, now=self._now()) if free > 0 else []
             for job in jobs:
                 task = asyncio.create_task(self._run_job(spec, job))
                 inflight.add(task)
@@ -305,7 +301,7 @@ class Pipeline:
             if jobs and len(inflight) < spec.concurrency():
                 continue
             wake.clear()
-            due = self.store.next_job_due_at()
+            due = self.store.jobs.next_job_due_at()
             wait = (
                 MAX_IDLE_WAIT_S
                 if due is None
@@ -339,12 +335,12 @@ class Pipeline:
             log.exception("pipeline.job_error", stage=spec.name, doc_id=job.doc_id)
             self._retry(spec, job, f"{spec.name}: {type(exc).__name__}: {exc}")
         else:
-            self.store.finish_job(job.id, state=outcome.value, now=self._now())
+            self.store.jobs.finish_job(job.id, state=outcome.value, now=self._now())
 
     def _retry(self, spec: StageSpec, job: Job, error: str, *, at_least_s: float = 0.0) -> None:
         backoff = self._retry_base * (2**job.attempts)
         delay = min(max(backoff, at_least_s), MAX_RETRY_DELAY_S)
-        if not self.store.retry_job(
+        if not self.store.jobs.retry_job(
             job.id, delay_s=delay, error=error, max_attempts=spec.max_attempts, now=self._now()
         ):
             log.warning("pipeline.job_failed", stage=spec.name, doc_id=job.doc_id, error=error)
@@ -352,13 +348,13 @@ class Pipeline:
 
     def _give_up(self, spec: StageSpec, job: Job, error: str, *, state: str) -> None:
         log.info("pipeline.job_skipped", stage=spec.name, doc_id=job.doc_id, error=error)
-        self.store.finish_job(job.id, state=state, error=error, now=self._now())
+        self.store.jobs.finish_job(job.id, state=state, error=error, now=self._now())
         self._mark_document(job, error)
 
     def _mark_document(self, job: Job, reason: str) -> None:
         """Stop a hopeless document from blocking the backlog; keep the reason visible."""
         with contextlib.suppress(StoreError):
-            self.store.record_extraction(
+            self.store.documents.record_extraction(
                 job.site_id, job.doc_id, extract_version=CONTENT_VERSION, skip_reason=reason[:200]
             )
 
@@ -371,7 +367,7 @@ class Pipeline:
 
     def _live_document(self, site_id: str, doc_id: str) -> Document | None:
         try:
-            document = self.store.document(site_id, doc_id)
+            document = self.store.documents.document(site_id, doc_id)
         except StoreError:
             return None
         return None if document.tombstoned_at is not None else document
@@ -386,9 +382,9 @@ class Pipeline:
             data = (document.text or "").encode("utf-8")
             segments = await asyncio.to_thread(extract_html, data)
         elif document.kind is DocumentKind.FILE:
-            if not document.blob_sha256 or not self.store.blob_exists(document.blob_sha256):
+            if not document.blob_sha256 or not self.store.blobs.blob_exists(document.blob_sha256):
                 return Outcome.WAITING
-            blob = self.store.read_blob(document.blob_sha256)
+            blob = self.store.blobs.read_blob(document.blob_sha256)
             try:
                 segments = await asyncio.to_thread(
                     extract, blob, filename=document.filename or "file"
@@ -396,7 +392,7 @@ class Pipeline:
             except ExtractionError as exc:
                 raise ExtractionError(f"extract failed: {exc}") from exc
         else:  # external documents are handled by the fetch stage
-            self.store.enqueue_job(job.site_id, job.doc_id, "fetch", now=self._now())
+            self.store.jobs.enqueue_job(job.site_id, job.doc_id, "fetch", now=self._now())
             self._wake["fetch"].set()
             return Outcome.SKIPPED
         self._index(document, segments, allow_ocr=True)
@@ -438,9 +434,9 @@ class Pipeline:
         document = self._live(job)
         if document is None or self.ocr is None or not document.blob_sha256:
             return Outcome.SKIPPED
-        if not self.store.blob_exists(document.blob_sha256):
+        if not self.store.blobs.blob_exists(document.blob_sha256):
             return Outcome.WAITING
-        blob = self.store.read_blob(document.blob_sha256)
+        blob = self.store.blobs.read_blob(document.blob_sha256)
         ocr = self.ocr.threadsafe(asyncio.get_running_loop())
         segments = await asyncio.to_thread(
             extract, blob, filename=document.filename or "file", ocr=ocr
@@ -457,7 +453,7 @@ class Pipeline:
         empty_reason: str = "no-text",
     ) -> None:
         chunks = chunk_segments(segments, header_path=document.header_path)
-        self.store.replace_content(
+        self.store.chunks.replace_content(
             document.site_id,
             document.doc_id,
             [
@@ -476,80 +472,17 @@ class Pipeline:
         )
         skip_reason: str | None = None
         if needs_ocr and allow_ocr and self.ocr is not None:
-            self.store.enqueue_job(document.site_id, document.doc_id, "ocr", now=self._now())
+            self.store.jobs.enqueue_job(document.site_id, document.doc_id, "ocr", now=self._now())
             self._wake["ocr"].set()
         elif needs_ocr:
             skip_reason = "needs-ocr"
         elif not chunks:
             skip_reason = empty_reason
-        self.store.record_extraction(
+        self.store.documents.record_extraction(
             document.site_id,
             document.doc_id,
             extract_version=CONTENT_VERSION,
             skip_reason=skip_reason,
         )
         if chunks:
-            self._wake["embed"].set()
-
-    # ------------------------------------------------------------------ #
-    # Embedding
-    # ------------------------------------------------------------------ #
-
-    def _embeddable_pending(self) -> int:
-        return len(self.store.chunks_without_vectors(limit=1, exclude_ids=self._poisoned_ids()))
-
-    def _poisoned_ids(self) -> set[int]:
-        return {cid for cid, n in self._poisoned.items() if n >= 3}
-
-    async def _embed_loop(self) -> None:
-        assert self.embedder is not None
-        wake = self._wake["embed"]
-        while True:
-            batch = (
-                []
-                if self._embedding_paused
-                else self.store.chunks_without_vectors(
-                    limit=self._embed_batch,
-                    exclude_ids=self._poisoned_ids(),
-                    exclude_sites=self._gated_sites(),
-                )
-            )
-            if not batch:
-                wake.clear()
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(wake.wait(), timeout=MAX_IDLE_WAIT_S)
-                continue
-            try:
-                vectors = await self.embedder.embed_documents(
-                    [c.text for c in batch], skip_failures=True
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                log.warning("pipeline.embed_error", error=type(exc).__name__)
-                vectors = [None] * len(batch)
-            stored = 0
-            for chunk, vector in zip(batch, vectors, strict=True):
-                if vector is None:
-                    self._poisoned[chunk.chunk_id] = self._poisoned.get(chunk.chunk_id, 0) + 1
-                    continue
-                try:
-                    self.store.set_embedding(chunk.chunk_id, vector)
-                    stored += 1
-                except Exception:  # chunk replaced while we were waiting on the provider
-                    continue
-                self._poisoned.pop(chunk.chunk_id, None)
-                if self._ingest_meter is not None:
-                    # Providers rarely report embedding usage: estimate ~4 chars/token.
-                    self._ingest_meter(chunk.site_id, max(1, len(chunk.text) // 4))
-            if stored == 0:
-                # The provider is down or rejecting everything: back off, keep the work.
-                self._embed_failing = True
-                self._embed_backoff = min(max(self._embed_backoff * 2, 1.0), MAX_RETRY_DELAY_S)
-                self._poisoned.clear()
-                wake.clear()
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(wake.wait(), timeout=self._embed_backoff)
-            else:
-                self._embed_failing = False
-                self._embed_backoff = 0.0
+            self._embedding.wake.set()

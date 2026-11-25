@@ -114,16 +114,16 @@ class QuotaService:
     # -- configuration ------------------------------------------------------
 
     def policy(self, site_id: str) -> QuotaPolicy:
-        return QuotaPolicy.model_validate(self.store.site_policy(site_id))
+        return QuotaPolicy.model_validate(self.store.sites.site_policy(site_id))
 
     def set_policy(self, site_id: str, policy: QuotaPolicy) -> None:
-        self.store.set_site_policy(site_id, policy.model_dump())
+        self.store.sites.set_site_policy(site_id, policy.model_dump())
 
     def ceilings(self, site_id: str) -> SiteCeilings:
-        return SiteCeilings.model_validate(self.store.site_ceilings(site_id))
+        return SiteCeilings.model_validate(self.store.sites.site_ceilings(site_id))
 
     def set_ceilings(self, site_id: str, ceilings: SiteCeilings) -> None:
-        self.store.set_site_ceilings(site_id, ceilings.model_dump())
+        self.store.sites.set_site_ceilings(site_id, ceilings.model_dump())
 
     # -- windows ------------------------------------------------------------
 
@@ -152,7 +152,7 @@ class QuotaService:
     def _used(
         self, site_id: str, policy: QuotaPolicy, *, since: int, until: int, user_id: int | None
     ) -> int:
-        rows = self.store.usage_rows(
+        rows = self.store.usage.usage_rows(
             site_id, since=since, until=until, purposes=CHAT_PURPOSES, user_id=user_id
         )
         return self._tokens(rows, policy)
@@ -230,7 +230,7 @@ class QuotaService:
         purpose: str = "chat",
     ) -> int:
         """Record one model call; returns the tokens it counts for."""
-        self.store.record_usage(
+        self.store.usage.record_usage(
             site_id,
             user_id=user_id,
             conversation_id=conversation_id,
@@ -248,7 +248,7 @@ class QuotaService:
         return counted
 
     def record_ingest(self, site_id: str, tokens: int, *, purpose: str = "embed") -> None:
-        self.store.record_usage(
+        self.store.usage.record_usage(
             site_id,
             user_id=None,
             conversation_id=None,
@@ -267,7 +267,9 @@ class QuotaService:
             return True
         policy = self.policy(site_id)
         day, next_day, _, _ = self._windows(policy)
-        rows = self.store.usage_rows(site_id, since=day, until=next_day, purposes=INGEST_PURPOSES)
+        rows = self.store.usage.usage_rows(
+            site_id, since=day, until=next_day, purposes=INGEST_PURPOSES
+        )
         return self._tokens(rows, policy) < limit
 
     # -- reporting ----------------------------------------------------------
@@ -291,7 +293,9 @@ class QuotaService:
         policy = self.policy(site_id)
         day, next_day, month, next_month = self._windows(policy)
         since, until = (day, next_day) if period == "day" else (month, next_month)
-        rows = self.store.usage_rows(site_id, since=since, until=until, purposes=CHAT_PURPOSES)
+        rows = self.store.usage.usage_rows(
+            site_id, since=since, until=until, purposes=CHAT_PURPOSES
+        )
         if by == "site":
             return [{"tokens": self._tokens(rows, policy), "calls": len(rows)}] if rows else []
         per_user: dict[int, list[Any]] = {}

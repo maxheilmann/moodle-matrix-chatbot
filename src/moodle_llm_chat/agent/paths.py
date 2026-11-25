@@ -108,9 +108,10 @@ class CourseTree:
     def build(cls, store: Store, scope: AccessScope) -> CourseTree:
         root = Node(name="/", kind=NodeKind.ROOT, path="/")
         by_doc: dict[str, Node] = {}
-        documents = store.live_documents(scope.site_id, cmids=scope.cmids)
+        documents = store.documents.live_documents(scope.site_id, cmids=scope.cmids)
         courses = {
-            c.course_id: c for c in store.courses(scope.site_id, course_ids=scope.course_ids)
+            c.course_id: c
+            for c in store.documents.courses(scope.site_id, course_ids=scope.course_ids)
         }
         course_nodes: dict[int, Node] = {}
 

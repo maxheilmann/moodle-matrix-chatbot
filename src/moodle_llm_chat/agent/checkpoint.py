@@ -73,7 +73,7 @@ class EncryptedCheckpointer(InMemorySaver):
     def _seal(self, thread_id: str, payload: Any, *where: str | int) -> bytes:
         site_id, user_id = _owner(thread_id)
         return seal(
-            self._store.chat_dek(site_id, user_id),
+            self._store.chat.chat_dek(site_id, user_id),
             json.dumps(payload),
             aad=aad("ckpt", thread_id, *where),
         )
@@ -82,7 +82,7 @@ class EncryptedCheckpointer(InMemorySaver):
         site_id, user_id = _owner(thread_id)
         return json.loads(
             open_box(
-                self._store.chat_dek(site_id, user_id),
+                self._store.chat.chat_dek(site_id, user_id),
                 bytes(box),
                 aad=aad("ckpt", thread_id, *where),
             )
@@ -94,7 +94,7 @@ class EncryptedCheckpointer(InMemorySaver):
         if thread_id in self._loaded:
             return
         _owner(thread_id)  # validate before touching anything
-        storage, writes, blobs = self._store.ckpt_rows(thread_id)
+        storage, writes, blobs = self._store.checkpoints.ckpt_rows(thread_id)
         for r in storage:
             ns, cid = r["ns"], r["checkpoint_id"]
             data = self._open(thread_id, r["sealed"], "s", ns, cid)
@@ -189,7 +189,7 @@ class EncryptedCheckpointer(InMemorySaver):
                     self._seal(thread, _typed_out(value), "b", ns, channel, str(version)),
                 )
             )
-        self._store.ckpt_put(storage=[storage_row], blobs=blob_rows)
+        self._store.checkpoints.ckpt_put(storage=[storage_row], blobs=blob_rows)
         return result
 
     def put_writes(
@@ -226,7 +226,7 @@ class EncryptedCheckpointer(InMemorySaver):
                     ),
                 )
             )
-        self._store.ckpt_put(writes=rows)
+        self._store.checkpoints.ckpt_put(writes=rows)
 
     def prune(self, thread_ids: Sequence[str], *, strategy: str = "keep_latest") -> None:
         """Drop all but the latest checkpoint per namespace (``"delete"``: drop everything).
@@ -270,7 +270,7 @@ class EncryptedCheckpointer(InMemorySaver):
             self.writes.pop((thread, ns, cid), None)
         for key in drop_blobs:
             del self.blobs[key]
-        self._store.ckpt_prune(
+        self._store.checkpoints.ckpt_prune(
             thread,
             checkpoints=drop,
             blobs=[(ns, channel, str(version)) for _, ns, channel, version in drop_blobs],
@@ -278,5 +278,5 @@ class EncryptedCheckpointer(InMemorySaver):
 
     def delete_thread(self, thread_id: str) -> None:
         super().delete_thread(thread_id)
-        self._store.ckpt_delete(thread_id)
+        self._store.checkpoints.ckpt_delete(thread_id)
         self._loaded.discard(thread_id)

@@ -47,7 +47,7 @@ def _claims(**overrides: Any) -> dict[str, Any]:
 
 @pytest.fixture
 def secret(store: Store) -> str:
-    return store.add_site(SITE, name="A", url=URL)
+    return store.sites.add_site(SITE, name="A", url=URL)
 
 
 class TestKeyDerivation:
@@ -118,7 +118,7 @@ class TestVerify:
 
     def test_revoked_site(self, store: Store, secret: str) -> None:
         token = issue_chat_token(secret, SITE, _claims())
-        store.revoke_site(SITE)
+        store.sites.revoke_site(SITE)
         with pytest.raises(TokenError):
             verify_chat_token(token, store)
 
@@ -131,7 +131,7 @@ class TestVerify:
         verify_chat_token(token, store, consume=False)
 
     def test_previous_secret_works_during_grace(self, store: Store, secret: str) -> None:
-        store.rotate_site_secret(SITE, grace_s=3600)
+        store.sites.rotate_site_secret(SITE, grace_s=3600)
         token = issue_chat_token(secret, SITE, _claims())
         assert verify_chat_token(token, store).site.site_id == SITE
 

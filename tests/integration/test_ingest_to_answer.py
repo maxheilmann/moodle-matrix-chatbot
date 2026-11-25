@@ -58,12 +58,16 @@ class TestIngest:
                 ("B204", "2:12:pdf"),
                 ("802.1Q", "2:13:link"),
             ):
-                ids = api.on_loop(lambda w=word: store.fts_chunk_ids("schule", f'"{w}"', limit=3))
-                (chunk,) = api.on_loop(lambda i=ids: store.chunks("schule", i[:1]))
+                ids = api.on_loop(
+                    lambda w=word: store.chunks.fts_chunk_ids("schule", f'"{w}"', limit=3)
+                )
+                (chunk,) = api.on_loop(lambda i=ids: store.chunks.chunks("schule", i[:1]))
                 assert chunk.doc_id == doc_id, word
-            pages = [s.page for s in api.on_loop(lambda: store.segments("schule", "2:12:pdf"))]
+            pages = [
+                s.page for s in api.on_loop(lambda: store.chunks.segments("schule", "2:12:pdf"))
+            ]
             assert pages == [1, 2]
-            html = api.on_loop(lambda: store.segments("schule", "2:11:page"))[0].text
+            html = api.on_loop(lambda: store.chunks.segments("schule", "2:11:page"))[0].text
             assert "x()" not in html
 
     def test_nothing_is_stored_in_plaintext(self, api: Api) -> None:

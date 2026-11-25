@@ -73,7 +73,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
         access=FakeMoodle(),
     )
     with TestClient(app, base_url="https://testserver") as client:
-        secret = client.portal.call(lambda: app.state.store.add_site(S, name="A", url=URL))  # type: ignore[union-attr]
+        secret = client.portal.call(lambda: app.state.store.sites.add_site(S, name="A", url=URL))  # type: ignore[union-attr]
         yield Env(client, secret, model)
 
 
@@ -310,9 +310,9 @@ class TestConversationsApi:
         last = env.client.get(url, headers=self._bearer(env)).json()["last_seq"]
         # A run of three deltas that went out live as last+1 .. last+3.
         for _ in range(3):
-            env.on_loop(env.store.next_seq, conv)
+            env.on_loop(env.store.chat.next_seq, conv)
         run = {"type": "token", "turn_id": "t", "delta": "Noch was.", "parts": [4, 4, 1]}
-        env.on_loop(lambda: env.store.append_event(S, 7, conv, "t", run, seq=last + 3))
+        env.on_loop(lambda: env.store.chat.append_event(S, 7, conv, "t", run, seq=last + 3))
         full = env.client.get(f"{url}?after_seq={last}", headers=self._bearer(env)).json()
         assert [e["delta"] for e in full["events"]] == ["Noch was."]
         assert "parts" not in full["events"][0]
@@ -357,7 +357,9 @@ class TestSubPathSite:
 
     def _register(self, env: Env) -> str:
         return str(
-            env.on_loop(lambda: env.store.add_site(self.SUB_SITE, name="Sub", url=self.SUB_URL))
+            env.on_loop(
+                lambda: env.store.sites.add_site(self.SUB_SITE, name="Sub", url=self.SUB_URL)
+            )
         )
 
     def _token(self, secret: str) -> str:

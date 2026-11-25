@@ -51,8 +51,10 @@ class TestFullSync:
             assert result["tombstoned"] == ["2:11:b"]
             api.idle()
             store = api.store
-            assert api.on_loop(lambda: store.fts_chunk_ids("schule", '"Beta"', limit=3)) == []
-            assert api.on_loop(lambda: store.fts_chunk_ids("schule", '"Gamma"', limit=3))
+            assert (
+                api.on_loop(lambda: store.chunks.fts_chunk_ids("schule", '"Beta"', limit=3)) == []
+            )
+            assert api.on_loop(lambda: store.chunks.fts_chunk_ids("schule", '"Gamma"', limit=3))
 
     def test_aborted_sync_never_deletes_anything(self, api: Api) -> None:
         with api.running():
@@ -108,7 +110,7 @@ class TestRestart:
             api.upload(data)
             api.idle()
             store = api.store
-            assert api.on_loop(lambda: store.fts_chunk_ids("schule", '"Spanning"', limit=3))
+            assert api.on_loop(lambda: store.chunks.fts_chunk_ids("schule", '"Spanning"', limit=3))
 
     def test_open_question_can_be_answered_after_a_restart(self, api: Api) -> None:
         api.model.script.extend(
@@ -205,4 +207,4 @@ class TestKeys:
             events = api.http.get(f"/api/conversations/{conv}", headers=bearer).json()["events"]
             assert any(e.get("text") == "Vor der Rotation." for e in events)
             store = api.store
-            assert api.on_loop(lambda: store.fts_chunk_ids("schule", '"Alpha"', limit=3))
+            assert api.on_loop(lambda: store.chunks.fts_chunk_ids("schule", '"Alpha"', limit=3))

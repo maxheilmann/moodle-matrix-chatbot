@@ -55,7 +55,7 @@ def build_embedder(
         return CachingEmbedder(
             query_api=override,
             document_api=override,
-            cache=store,
+            cache=store.chunks,
             provider="override",
             model="override",
             dim=settings.embedding.dim,
@@ -70,7 +70,7 @@ def build_embedder(
     return CachingEmbedder(
         query_api=build_embeddings(cfg, task="query"),
         document_api=build_embeddings(cfg, task="document"),
-        cache=store,
+        cache=store.chunks,
         provider=cfg.provider.value,
         model=cfg.model,
         dim=cfg.dim,
@@ -87,7 +87,7 @@ def build_ocr(settings: Settings, store: Store) -> VisionOCR | None:
     if settings.ocr.model:
         llm = llm.model_copy(update={"utility_model": settings.ocr.model})
     model = build_chat_model(llm, utility=True)
-    return VisionOCR(model, store, model_tag=f"{llm.provider.value}:{llm.utility_model}")
+    return VisionOCR(model, store.chunks, model_tag=f"{llm.provider.value}:{llm.utility_model}")
 
 
 def _chat_model(settings: Settings) -> BaseChatModel | None:
@@ -166,7 +166,7 @@ def create_app(
 
                 checker: AccessChecker = access or MoodleAccessClient(
                     http,
-                    secrets=store.site_secrets,
+                    secrets=store.sites.site_secrets,
                     cache_ttl_s=settings.moodle.access_cache_ttl_s,
                     timeout_s=settings.moodle.callback_timeout_s,
                     breaker_failures=settings.moodle.circuit_breaker_failures,
@@ -231,7 +231,7 @@ def create_app(
         store: Store | None = getattr(app.state, "store", None)
         if store is None:
             return set()
-        return {site_origin(s.url) for s in store.sites() if s.revoked_at is None}
+        return {site_origin(s.url) for s in store.sites.sites() if s.revoked_at is None}
 
     app.add_middleware(SiteCORS, allowed_origins=allowed_origins)
 

@@ -133,20 +133,20 @@ class TestInlineAndHtml:
     async def test_inline_document_is_chunked_and_embedded(
         self, store: Store, http: httpx.AsyncClient
     ) -> None:
-        store.upsert_documents(S, [doc(text="Die Prüfung ist am Montag in Raum 204.")])
+        store.documents.upsert_documents(S, [doc(text="Die Prüfung ist am Montag in Raum 204.")])
         p = await running(make(store, http))
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         await p.idle(timeout=5)
         await p.stop()
-        segs = store.segments(S, "2:10:intro")
+        segs = store.chunks.segments(S, "2:10:intro")
         assert segs[0].text.startswith("Die Prüfung")
-        assert store.chunk_count(S) == 1
-        assert store.pending_vector_count() == 0
-        assert store.document(S, "2:10:intro").extract_version == CONTENT_VERSION
-        assert store.fts_chunk_ids(S, "Raum", limit=3)
+        assert store.chunks.chunk_count(S) == 1
+        assert store.chunks.pending_vector_count() == 0
+        assert store.documents.document(S, "2:10:intro").extract_version == CONTENT_VERSION
+        assert store.chunks.fts_chunk_ids(S, "Raum", limit=3)
 
     async def test_html_document_drops_markup(self, store: Store, http: httpx.AsyncClient) -> None:
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S,
             [
                 doc(
@@ -159,7 +159,7 @@ class TestInlineAndHtml:
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         await p.idle(timeout=5)
         await p.stop()
-        text = store.segments(S, "2:10:intro")[0].text
+        text = store.chunks.segments(S, "2:10:intro")[0].text
         assert "Stundenplan" in text and "Mo 8 Uhr" in text
         assert "script" not in text and "x()" not in text
 
@@ -170,16 +170,16 @@ class TestFiles:
     ) -> None:
         data = pdf_bytes(["Subnetting erklaert auf Seite eins mit vielen Woertern fuer den Test."])
         sha = hashlib.sha256(data).hexdigest()
-        store.upsert_documents(S, [file_doc("2:20:pdf", sha)])
+        store.documents.upsert_documents(S, [file_doc("2:20:pdf", sha)])
         p = await running(make(store, http))
         p.documents_changed(S, ["2:20:pdf"], bulk=False)
         await p.idle(timeout=5)
-        assert store.chunk_count(S) == 0
-        store.put_blob(io.BytesIO(data), expected_sha256=sha)
+        assert store.chunks.chunk_count(S) == 0
+        store.blobs.put_blob(io.BytesIO(data), expected_sha256=sha)
         p.blob_arrived(S, sha)
         await p.idle(timeout=5)
         await p.stop()
-        (seg,) = store.segments(S, "2:20:pdf")
+        (seg,) = store.chunks.segments(S, "2:20:pdf")
         assert seg.page == 1
         assert "Subnetting" in seg.text
 
@@ -188,44 +188,44 @@ class TestFiles:
     ) -> None:
         data = b"%PDF-1.4 this is not really a pdf"
         sha = hashlib.sha256(data).hexdigest()
-        store.upsert_documents(S, [file_doc("2:20:pdf", sha)])
-        store.put_blob(io.BytesIO(data), expected_sha256=sha)
+        store.documents.upsert_documents(S, [file_doc("2:20:pdf", sha)])
+        store.blobs.put_blob(io.BytesIO(data), expected_sha256=sha)
         p = await running(make(store, http))
         p.documents_changed(S, ["2:20:pdf"], bulk=False)
         await p.idle(timeout=5)
         await p.stop()
-        d = store.document(S, "2:20:pdf")
+        d = store.documents.document(S, "2:20:pdf")
         assert d.extract_version == CONTENT_VERSION
         assert d.skip_reason and "extract" in d.skip_reason
-        assert store.job_counts()["extract"].get("failed", 0) == 0
+        assert store.jobs.job_counts()["extract"].get("failed", 0) == 0
 
     async def test_scanned_page_goes_to_ocr(self, store: Store, http: httpx.AsyncClient) -> None:
         data = pdf_bytes(["Normale Textseite. " * 8, ""])
         sha = hashlib.sha256(data).hexdigest()
-        store.upsert_documents(S, [file_doc("2:20:pdf", sha)])
-        store.put_blob(io.BytesIO(data), expected_sha256=sha)
+        store.documents.upsert_documents(S, [file_doc("2:20:pdf", sha)])
+        store.blobs.put_blob(io.BytesIO(data), expected_sha256=sha)
         ocr = FakeOCR()
         p = await running(make(store, http, ocr=ocr))
         p.documents_changed(S, ["2:20:pdf"], bulk=False)
         await p.idle(timeout=5)
         await p.stop()
-        pages = {s.page: s.text for s in store.segments(S, "2:20:pdf")}
+        pages = {s.page: s.text for s in store.chunks.segments(S, "2:20:pdf")}
         assert ocr.calls == 1
         assert "OCR-Text" in pages[2]
-        assert store.document(S, "2:20:pdf").skip_reason is None
+        assert store.documents.document(S, "2:20:pdf").skip_reason is None
 
     async def test_scanned_page_without_ocr_is_marked(
         self, store: Store, http: httpx.AsyncClient
     ) -> None:
         data = pdf_bytes(["", ""])
         sha = hashlib.sha256(data).hexdigest()
-        store.upsert_documents(S, [file_doc("2:20:pdf", sha)])
-        store.put_blob(io.BytesIO(data), expected_sha256=sha)
+        store.documents.upsert_documents(S, [file_doc("2:20:pdf", sha)])
+        store.blobs.put_blob(io.BytesIO(data), expected_sha256=sha)
         p = await running(make(store, http))
         p.documents_changed(S, ["2:20:pdf"], bulk=False)
         await p.idle(timeout=5)
         await p.stop()
-        assert store.document(S, "2:20:pdf").skip_reason == "needs-ocr"
+        assert store.documents.document(S, "2:20:pdf").skip_reason == "needs-ocr"
 
 
 class TestExternal:
@@ -233,14 +233,14 @@ class TestExternal:
         async def fetcher(url: str, **kw: Any) -> FetchedText:
             return FetchedText(text="Transkript des Erklärvideos zu VLANs.")
 
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S, [doc(kind=DocumentKind.EXTERNAL, text=None, external_url="https://youtu.be/x")]
         )
         p = await running(make(store, http, fetcher=fetcher))
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         await p.idle(timeout=5)
         await p.stop()
-        assert "VLANs" in store.segments(S, "2:10:intro")[0].text
+        assert "VLANs" in store.chunks.segments(S, "2:10:intro")[0].text
 
     async def test_renamed_section_rechunks_without_fetching_again(
         self, store: Store, http: httpx.AsyncClient
@@ -253,19 +253,19 @@ class TestExternal:
             return FetchedText(text="Montag: Einführung in LF11, Raum 119.")
 
         external = {"kind": DocumentKind.EXTERNAL, "text": None, "external_url": "https://x.test/s"}
-        store.upsert_documents(S, [doc(**external)])
+        store.documents.upsert_documents(S, [doc(**external)])
         p = await running(make(store, http, fetcher=fetcher))
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         await p.idle(timeout=5)
         renamed = doc(**external, section_name="LF 11", header_path=["Netzwerke", "LF 11", "Plan"])
-        result = store.upsert_documents_detailed(S, [renamed])
+        result = store.documents.upsert_documents_detailed(S, [renamed])
         p.documents_relocated(S, result.relocated)
         await p.idle(timeout=5)
         await p.stop()
         assert fetches == 1
-        chunks = store.chunks_for_document(S, "2:10:intro")
+        chunks = store.chunks.chunks_for_document(S, "2:10:intro")
         assert chunks and all("LF 11" in c.text for c in chunks)
-        assert store.pending_vector_count() == 0
+        assert store.chunks.pending_vector_count() == 0
 
     async def test_transient_failure_is_retried(
         self, store: Store, http: httpx.AsyncClient
@@ -279,7 +279,7 @@ class TestExternal:
                 raise TransientFetchError("503")
             return FetchedText(text="Endlich da.")
 
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S, [doc(kind=DocumentKind.EXTERNAL, text=None, external_url="https://hackmd.io/x")]
         )
         p = await running(make(store, http, fetcher=flaky))
@@ -287,7 +287,7 @@ class TestExternal:
         await p.idle(timeout=5)
         await p.stop()
         assert attempts == 3
-        assert store.segments(S, "2:10:intro")[0].text == "Endlich da."
+        assert store.chunks.segments(S, "2:10:intro")[0].text == "Endlich da."
 
     async def test_retry_waits_at_least_as_long_as_retry_after(
         self, store: Store, http: httpx.AsyncClient
@@ -295,7 +295,7 @@ class TestExternal:
         async def limited(url: str, **kw: Any) -> FetchedText:
             raise TransientFetchError("HTTP 429", retry_after=600, rate_limited=True)
 
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S, [doc(kind=DocumentKind.EXTERNAL, text=None, external_url="https://cloud.x.test/s")]
         )
         p = await running(make(store, http, fetcher=limited, rate_limit_cooldown_s=0))
@@ -303,7 +303,7 @@ class TestExternal:
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         await p.idle(timeout=5)
         await p.stop()
-        due = store.next_job_due_at()
+        due = store.jobs.next_job_due_at()
         assert due is not None and due >= started + 600
 
     async def test_rate_limit_pauses_the_whole_host(
@@ -318,7 +318,7 @@ class TestExternal:
             return FetchedText(text="Inhalt")
 
         external = {"kind": DocumentKind.EXTERNAL, "text": None}
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S,
             [
                 doc("2:10:a", external_url="https://cloud.x.test/a", **external),
@@ -350,15 +350,15 @@ class TestExternal:
         async def dead(url: str, **kw: Any) -> FetchedText:
             raise TransientFetchError("503")
 
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S, [doc(kind=DocumentKind.EXTERNAL, text=None, external_url="https://hackmd.io/x")]
         )
         p = await running(make(store, http, fetcher=dead))
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         await p.idle(timeout=5)
         await p.stop()
-        assert store.job_counts()["fetch"]["failed"] == 1
-        d = store.document(S, "2:10:intro")
+        assert store.jobs.job_counts()["fetch"]["failed"] == 1
+        d = store.documents.document(S, "2:10:intro")
         assert d.skip_reason and "fetch" in d.skip_reason
         assert not d.needs_extraction
 
@@ -374,7 +374,7 @@ class TestExternal:
                 raise TransientFetchError("HTTP 429", rate_limited=True)
             return FetchedText(text="Montag: Einführung in LF11.")
 
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S, [doc(kind=DocumentKind.EXTERNAL, text=None, external_url="https://cloud.x.test/s")]
         )
         p = await running(
@@ -382,7 +382,7 @@ class TestExternal:
         )
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         await p.idle(timeout=5)
-        assert store.job_counts(now=int(now[0]))["fetch"]["failed"] == 1
+        assert store.jobs.job_counts(now=int(now[0]))["fetch"]["failed"] == 1
 
         now[0] += 3600  # too soon: nothing re-armed
         assert p.requeue_failed_fetches() == 0
@@ -391,9 +391,9 @@ class TestExternal:
         assert p.requeue_failed_fetches() == 1
         await p.idle(timeout=5)
         await p.stop()
-        d = store.document(S, "2:10:intro")
+        d = store.documents.document(S, "2:10:intro")
         assert d.skip_reason is None
-        assert "LF11" in store.segments(S, "2:10:intro")[0].text
+        assert "LF11" in store.chunks.segments(S, "2:10:intro")[0].text
 
     async def test_permanent_failure_is_never_retried(
         self, store: Store, http: httpx.AsyncClient
@@ -403,7 +403,7 @@ class TestExternal:
         async def gone(url: str, **kw: Any) -> FetchedText:
             raise PermanentFetchError("HTTP 404")
 
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S, [doc(kind=DocumentKind.EXTERNAL, text=None, external_url="https://cloud.x.test/s")]
         )
         p = await running(make(store, http, fetcher=gone, clock=lambda: now[0]))
@@ -418,13 +418,13 @@ class TestIsolationAndRecovery:
     async def test_embedding_outage_does_not_block_extraction(
         self, store: Store, http: httpx.AsyncClient
     ) -> None:
-        store.upsert_documents(S, [doc()])
+        store.documents.upsert_documents(S, [doc()])
         p = await running(make(store, http, vectors=Vectors(fail=True)))
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         await p.idle(timeout=5, include_embeddings=False)
         await p.stop()
-        assert store.chunk_count(S) == 1
-        assert store.pending_vector_count() == 1
+        assert store.chunks.chunk_count(S) == 1
+        assert store.chunks.pending_vector_count() == 1
 
     async def test_slow_stage_does_not_delay_another(
         self, store: Store, http: httpx.AsyncClient
@@ -435,7 +435,7 @@ class TestIsolationAndRecovery:
             await release.wait()
             return FetchedText(text="spät")
 
-        store.upsert_documents(
+        store.documents.upsert_documents(
             S,
             [
                 doc(
@@ -450,10 +450,10 @@ class TestIsolationAndRecovery:
         p = await running(make(store, http, fetcher=blocked))
         p.documents_changed(S, ["2:10:ext", "2:11:inline"], bulk=False)
         for _ in range(100):
-            if store.segments(S, "2:11:inline"):
+            if store.chunks.segments(S, "2:11:inline"):
                 break
             await asyncio.sleep(0.01)
-        assert store.segments(S, "2:11:inline")
+        assert store.chunks.segments(S, "2:11:inline")
         release.set()
         await p.idle(timeout=5)
         await p.stop()
@@ -461,13 +461,13 @@ class TestIsolationAndRecovery:
     async def test_startup_resumes_backlog_and_interrupted_jobs(
         self, store: Store, http: httpx.AsyncClient
     ) -> None:
-        store.upsert_documents(S, [doc("2:10:a"), doc("2:11:b")])
-        store.enqueue_job(S, "2:10:a", "extract")
-        store.claim_jobs("extract", limit=1)  # a crash left it "running"
+        store.documents.upsert_documents(S, [doc("2:10:a"), doc("2:11:b")])
+        store.jobs.enqueue_job(S, "2:10:a", "extract")
+        store.jobs.claim_jobs("extract", limit=1)  # a crash left it "running"
         p = await running(make(store, http))
         await p.idle(timeout=5)
         await p.stop()
-        assert store.segments(S, "2:10:a") and store.segments(S, "2:11:b")
+        assert store.chunks.segments(S, "2:10:a") and store.chunks.segments(S, "2:11:b")
 
     async def test_concurrency_limit_is_respected(
         self, store: Store, http: httpx.AsyncClient
@@ -492,7 +492,7 @@ class TestIsolationAndRecovery:
             )
             for i in range(6)
         ]
-        store.upsert_documents(S, docs)
+        store.documents.upsert_documents(S, docs)
         p = await running(make(store, http, fetcher=slow))
         p.settings = PipelineSection(fetch_concurrency=2)
         p.documents_changed(S, [d.doc_id for d in docs], bulk=True)
@@ -503,7 +503,7 @@ class TestIsolationAndRecovery:
     async def test_status_reports_stages_and_vectors(
         self, store: Store, http: httpx.AsyncClient
     ) -> None:
-        store.upsert_documents(S, [doc()])
+        store.documents.upsert_documents(S, [doc()])
         p = make(store, http)
         p.documents_changed(S, ["2:10:intro"], bulk=False)
         status = p.status()
@@ -515,8 +515,8 @@ class TestIngestBudget:
     async def test_gated_site_is_not_embedded_and_others_are(
         self, store: Store, http: httpx.AsyncClient
     ) -> None:
-        store.upsert_documents(S, [doc("2:1:a")])
-        store.upsert_documents("site-b", [doc("2:1:a")])
+        store.documents.upsert_documents(S, [doc("2:1:a")])
+        store.documents.upsert_documents("site-b", [doc("2:1:a")])
         allowed = {S: False, "site-b": True}
         metered: dict[str, int] = {}
 
@@ -535,11 +535,11 @@ class TestIngestBudget:
             if "site-b" in metered:
                 break
             await asyncio.sleep(0.01)
-        assert store.pending_vector_count() == 1  # site-a's chunk waits
+        assert store.chunks.pending_vector_count() == 1  # site-a's chunk waits
         assert metered.get("site-b", 0) > 0 and S not in metered
         allowed[S] = True
         p.ingest_budget_changed()
         await p.idle(timeout=5)
         await p.stop()
-        assert store.pending_vector_count() == 0
+        assert store.chunks.pending_vector_count() == 0
         assert metered[S] > 0

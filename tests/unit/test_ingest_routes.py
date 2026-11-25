@@ -44,10 +44,12 @@ def secrets(app_client: TestClient) -> dict[str, str]:
     store = store_of(app_client)
     return {
         "a": on_loop(
-            app_client, lambda: store.add_site("site-a", name="A", url="https://moodle.a.test")
+            app_client,
+            lambda: store.sites.add_site("site-a", name="A", url="https://moodle.a.test"),
         ),
         "b": on_loop(
-            app_client, lambda: store.add_site("site-b", name="B", url="https://moodle.b.test")
+            app_client,
+            lambda: store.sites.add_site("site-b", name="B", url="https://moodle.b.test"),
         ),
     }
 
@@ -75,7 +77,7 @@ class TestAuth:
         assert r.json() == {"detail": "unauthorized"}
 
     def test_revoked_site_is_401(self, app_client: TestClient, secrets: dict[str, str]) -> None:
-        on_loop(app_client, store_of(app_client).revoke_site, "site-a")
+        on_loop(app_client, store_of(app_client).sites.revoke_site, "site-a")
         assert app_client.get("/ingest/status", headers=_auth(secrets["a"])).status_code == 401
 
     def test_plain_http_is_refused(self, app_client: TestClient, secrets: dict[str, str]) -> None:
@@ -208,7 +210,7 @@ class TestBlobs:
         assert r.status_code == 201
         again = app_client.put(f"/ingest/blobs/{sha}", content=data, headers=_auth(secrets["a"]))
         assert again.status_code == 200
-        assert on_loop(app_client, store_of(app_client).read_blob, sha) == data
+        assert on_loop(app_client, store_of(app_client).blobs.read_blob, sha) == data
 
     def test_digest_mismatch_is_422(self, app_client: TestClient, secrets: dict[str, str]) -> None:
         sha = hashlib.sha256(b"expected").hexdigest()

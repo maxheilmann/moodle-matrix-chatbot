@@ -109,7 +109,7 @@ class TestTitlesInChat:
         )
         await wait_done(svc, conv)
         await settle(svc)
-        assert world.conversation(S, 7, conv).title == "Unterrichtsraum"
+        assert world.chat.conversation(S, 7, conv).title == "Unterrichtsraum"
         events = svc.replay(v, conv, after_seq=0)
         title_event = next(e for e in events if e["type"] == "title")
         assert title_event["title"] == "Unterrichtsraum"
@@ -125,7 +125,7 @@ class TestTitlesInChat:
         conv, _ = await svc.send(v, conversation_id=None, course_id=None, text="Wo?")
         await wait_done(svc, conv)
         await settle(svc)
-        rows = world.usage_rows(S, since=0, until=2**40, purposes=("utility",), user_id=7)
+        rows = world.usage.usage_rows(S, since=0, until=2**40, purposes=("utility",), user_id=7)
         assert [(r["input_tokens"], r["output_tokens"]) for r in rows] == [(30, 2)]
 
     async def test_later_messages_do_not_retitle(self, world: Store) -> None:  # noqa: F811
@@ -139,7 +139,7 @@ class TestTitlesInChat:
         await svc.send(v, conversation_id=conv, course_id=None, text="zwei?")
         await wait_done(svc, conv)
         await settle(svc)
-        assert world.conversation(S, 7, conv).title == "Erster Titel"
+        assert world.chat.conversation(S, 7, conv).title == "Erster Titel"
         assert len(titles.seen) == 1
 
     async def test_a_title_set_by_the_user_meanwhile_wins(self, world: Store) -> None:  # noqa: F811
@@ -155,11 +155,11 @@ class TestTitlesInChat:
         )
         v = verified(world)
         conv, _ = await svc.send(v, conversation_id=None, course_id=None, text="Frage")
-        world.set_conversation_title(S, 7, conv, "Mein Name")
+        world.chat.set_conversation_title(S, 7, conv, "Mein Name")
         release.set()
         await wait_done(svc, conv)
         await settle(svc)
-        assert world.conversation(S, 7, conv).title == "Mein Name"
+        assert world.chat.conversation(S, 7, conv).title == "Mein Name"
         assert "title" not in kinds(svc.replay(v, conv, after_seq=0))
 
     async def test_failure_keeps_the_first_message_as_title(self, world: Store) -> None:  # noqa: F811
@@ -173,8 +173,8 @@ class TestTitlesInChat:
         conv, turn = await svc.send(v, conversation_id=None, course_id=None, text="Wo ist B204?")
         await wait_done(svc, conv)
         await settle(svc)
-        assert world.conversation(S, 7, conv).title == "Wo ist B204?"
-        assert world.turn(conv, turn).state == "done"
+        assert world.chat.conversation(S, 7, conv).title == "Wo ist B204?"
+        assert world.chat.turn(conv, turn).state == "done"
         assert "title" not in kinds(svc.replay(v, conv, after_seq=0))
 
     async def test_a_slow_title_does_not_hold_the_answer_forever(
@@ -203,7 +203,7 @@ class TestTitlesInChat:
         await settle(svc)
         events = svc.replay(v, conv, after_seq=0)
         assert kinds(events)[-1] == "title"
-        assert world.conversation(S, 7, conv).title == "Spät"
+        assert world.chat.conversation(S, 7, conv).title == "Spät"
 
     async def test_without_a_title_model_the_first_message_is_the_title(
         self,
@@ -213,7 +213,7 @@ class TestTitlesInChat:
         v = verified(world)
         conv, _ = await svc.send(v, conversation_id=None, course_id=None, text="x" * 100)
         await wait_done(svc, conv)
-        assert world.conversation(S, 7, conv).title == "x" * TITLE_CHARS
+        assert world.chat.conversation(S, 7, conv).title == "x" * TITLE_CHARS
 
     async def test_shutdown_cancels_pending_titles(self, world: Store) -> None:  # noqa: F811
         class Hang(ScriptedModel):

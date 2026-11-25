@@ -82,7 +82,7 @@ class Api:
             self.client = client
             if not self.secret:
                 self.secret = self.on_loop(
-                    lambda: self.store.add_site(SITE, name="Schule", url=MOODLE)
+                    lambda: self.store.sites.add_site(SITE, name="Schule", url=MOODLE)
                 )
                 self.moodle.secret = self.secret
             try:

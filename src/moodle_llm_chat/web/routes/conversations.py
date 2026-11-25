@@ -84,7 +84,7 @@ async def list_conversations(v: ChatUser, store: StoreDep) -> list[ConversationS
             created_at=c.created_at,
             updated_at=c.updated_at,
         )
-        for c in store.conversations(v.site.site_id, v.scope.user_id)
+        for c in store.chat.conversations(v.site.site_id, v.scope.user_id)
     ]
 
 
@@ -113,8 +113,10 @@ async def get_conversation(
     ``last_seq``.
     """
     try:
-        conversation = store.conversation(v.site.site_id, v.scope.user_id, conversation_id)
-        rows = store.events(v.site.site_id, v.scope.user_id, conversation_id, after_seq=after_seq)
+        conversation = store.chat.conversation(v.site.site_id, v.scope.user_id, conversation_id)
+        rows = store.chat.events(
+            v.site.site_id, v.scope.user_id, conversation_id, after_seq=after_seq
+        )
     except StoreError as exc:
         raise NOT_FOUND from exc
     return {
@@ -135,7 +137,9 @@ async def rename_conversation(
 ) -> Renamed:
     """Set the title of one of the user's conversations."""
     try:
-        store.set_conversation_title(v.site.site_id, v.scope.user_id, conversation_id, body.title)
+        store.chat.set_conversation_title(
+            v.site.site_id, v.scope.user_id, conversation_id, body.title
+        )
     except StoreError as exc:
         raise NOT_FOUND from exc
     return Renamed(id=conversation_id, title=body.title)
@@ -155,7 +159,7 @@ async def archive_conversation(
     The stored history is kept; it is not deleted.
     """
     try:
-        store.archive_conversation(v.site.site_id, v.scope.user_id, conversation_id)
+        store.chat.archive_conversation(v.site.site_id, v.scope.user_id, conversation_id)
     except StoreError as exc:
         raise NOT_FOUND from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

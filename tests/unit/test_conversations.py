@@ -19,101 +19,105 @@ S = "site-a"
 
 class TestConversations:
     def test_create_list_and_ownership(self, store: Store) -> None:
-        a = store.create_conversation(S, 1, course_id=2)
-        store.create_conversation(S, 2)
-        assert [c.id for c in store.conversations(S, 1)] == [a]
+        a = store.chat.create_conversation(S, 1, course_id=2)
+        store.chat.create_conversation(S, 2)
+        assert [c.id for c in store.chat.conversations(S, 1)] == [a]
         with pytest.raises(StoreError):
-            store.conversation(S, 2, a)
+            store.chat.conversation(S, 2, a)
 
     def test_title_is_encrypted(self, store: Store, tmp_path: Path) -> None:
-        conv = store.create_conversation(S, 1)
-        store.set_conversation_title(S, 1, conv, "Frage zur Abschlussprüfung")
-        assert store.conversation(S, 1, conv).title == "Frage zur Abschlussprüfung"
+        conv = store.chat.create_conversation(S, 1)
+        store.chat.set_conversation_title(S, 1, conv, "Frage zur Abschlussprüfung")
+        assert store.chat.conversation(S, 1, conv).title == "Frage zur Abschlussprüfung"
         store.close()
         assert b"Abschlusspr" not in read_disk(tmp_path / "index.db")
 
     def test_events_append_with_sequence_and_replay_after(self, store: Store) -> None:
-        conv = store.create_conversation(S, 1)
-        seqs = [store.append_event(S, 1, conv, "t1", {"type": "token", "delta": d}) for d in "abc"]
+        conv = store.chat.create_conversation(S, 1)
+        seqs = [
+            store.chat.append_event(S, 1, conv, "t1", {"type": "token", "delta": d}) for d in "abc"
+        ]
         assert seqs == [1, 2, 3]
-        assert [e["delta"] for _, e in store.events(S, 1, conv, after_seq=1)] == ["b", "c"]
+        assert [e["delta"] for _, e in store.chat.events(S, 1, conv, after_seq=1)] == ["b", "c"]
 
     def test_event_seqs_are_never_reused_after_a_restart(
         self, tmp_path: Path, ring: KeyRing
     ) -> None:
         with Store(tmp_path / "db", ring, embed_dim=3) as store:
-            conv = store.create_conversation(S, 1)
+            conv = store.chat.create_conversation(S, 1)
             # Handed out to live subscribers, never stored (a crash lost them).
-            assert [store.next_seq(conv) for _ in range(3)] == [1, 2, 3]
+            assert [store.chat.next_seq(conv) for _ in range(3)] == [1, 2, 3]
         with Store(tmp_path / "db", ring, embed_dim=3) as store:
-            seq = store.append_event(S, 1, conv, "t1", {"type": "turn_interrupted"})
+            seq = store.chat.append_event(S, 1, conv, "t1", {"type": "turn_interrupted"})
             assert seq > 3
-            assert store.next_seq(conv) == seq + 1
+            assert store.chat.next_seq(conv) == seq + 1
 
     def test_append_event_keeps_a_given_seq(self, store: Store) -> None:
-        conv = store.create_conversation(S, 1)
-        seqs = [store.next_seq(conv) for _ in range(3)]
-        store.append_event(S, 1, conv, "t1", {"type": "token", "delta": "abc"}, seq=seqs[-1])
-        assert [(seq, e["seq"]) for seq, e in store.events(S, 1, conv)] == [(3, 3)]
+        conv = store.chat.create_conversation(S, 1)
+        seqs = [store.chat.next_seq(conv) for _ in range(3)]
+        store.chat.append_event(S, 1, conv, "t1", {"type": "token", "delta": "abc"}, seq=seqs[-1])
+        assert [(seq, e["seq"]) for seq, e in store.chat.events(S, 1, conv)] == [(3, 3)]
 
     def test_a_partly_seen_streamed_run_resumes_where_it_was_left(self, store: Store) -> None:
-        conv = store.create_conversation(S, 1)
-        store.append_event(S, 1, conv, "t1", {"type": "user_message", "text": "?"})  # seq 1
+        conv = store.chat.create_conversation(S, 1)
+        store.chat.append_event(S, 1, conv, "t1", {"type": "user_message", "text": "?"})  # seq 1
         # One stored run of three deltas that went out live as seqs 2, 3 and 4.
         run = {"type": "token", "delta": "Hallo Welt!", "parts": [5, 5, 1]}
-        store.append_event(S, 1, conv, "t1", run, seq=4)
+        store.chat.append_event(S, 1, conv, "t1", run, seq=4)
 
         def tail(after: int) -> list[Any]:
-            return [e.get("delta") for _, e in store.events(S, 1, conv, after_seq=after)]
+            return [e.get("delta") for _, e in store.chat.events(S, 1, conv, after_seq=after)]
 
         assert tail(1) == ["Hallo Welt!"]
         assert tail(2) == [" Welt!"]
         assert tail(3) == ["!"]
         assert tail(4) == []
-        assert all("parts" not in e for _, e in store.events(S, 1, conv))
+        assert all("parts" not in e for _, e in store.chat.events(S, 1, conv))
 
     def test_a_partly_seen_thinking_indicator_is_not_repeated(self, store: Store) -> None:
-        conv = store.create_conversation(S, 1)
+        conv = store.chat.create_conversation(S, 1)
         run = {"type": "thinking", "delta": None, "parts": [0, 0]}
-        store.append_event(S, 1, conv, "t1", run, seq=2)
-        assert [e["delta"] for _, e in store.events(S, 1, conv)] == [None]
-        assert store.events(S, 1, conv, after_seq=1) == []
+        store.chat.append_event(S, 1, conv, "t1", run, seq=2)
+        assert [e["delta"] for _, e in store.chat.events(S, 1, conv)] == [None]
+        assert store.chat.events(S, 1, conv, after_seq=1) == []
 
     def test_events_are_encrypted_and_owner_only(self, store: Store, tmp_path: Path) -> None:
-        conv = store.create_conversation(S, 1)
-        store.append_event(S, 1, conv, "t1", {"type": "user_message", "text": "Meine Note ist 5"})
+        conv = store.chat.create_conversation(S, 1)
+        store.chat.append_event(
+            S, 1, conv, "t1", {"type": "user_message", "text": "Meine Note ist 5"}
+        )
         with pytest.raises(StoreError):
-            store.events(S, 2, conv)
+            store.chat.events(S, 2, conv)
         store.close()
         assert b"Meine Note" not in read_disk(tmp_path / "index.db")
 
     def test_users_have_distinct_chat_keys(self, store: Store) -> None:
-        store.create_conversation(S, 1)
-        store.create_conversation(S, 2)
-        store.append_event(S, 1, store.conversations(S, 1)[0].id, "t", {"x": 1})
-        store.append_event(S, 2, store.conversations(S, 2)[0].id, "t", {"x": 1})
+        store.chat.create_conversation(S, 1)
+        store.chat.create_conversation(S, 2)
+        store.chat.append_event(S, 1, store.chat.conversations(S, 1)[0].id, "t", {"x": 1})
+        store.chat.append_event(S, 2, store.chat.conversations(S, 2)[0].id, "t", {"x": 1})
         chat_keys = [k for k in store.all_wrapped_keys() if k[0] == "chat"]
         assert {k[1] for k in chat_keys} == {f"{S}:1", f"{S}:2"}
 
     def test_archive_hides_conversation(self, store: Store) -> None:
-        conv = store.create_conversation(S, 1)
-        store.archive_conversation(S, 1, conv)
-        assert store.conversations(S, 1) == []
+        conv = store.chat.create_conversation(S, 1)
+        store.chat.archive_conversation(S, 1, conv)
+        assert store.chat.conversations(S, 1) == []
 
     def test_turn_lifecycle_and_startup_recovery(self, store: Store) -> None:
-        conv = store.create_conversation(S, 1)
-        store.start_turn(S, 1, conv, "t1", client_msg_id="m1")
-        assert store.turn_for_client_message(conv, "m1") == "t1"
-        assert store.running_turn(conv) == "t1"
-        store.set_turn_state("t1", "waiting")
-        assert store.running_turn(conv) == "t1"  # waiting for the user still blocks a new turn
-        store.set_turn_state("t1", "running")
-        assert store.interrupt_running_turns() == [(S, 1, conv, "t1")]
-        assert store.turn(conv, "t1").state == "interrupted"
-        assert store.running_turn(conv) is None
+        conv = store.chat.create_conversation(S, 1)
+        store.chat.start_turn(S, 1, conv, "t1", client_msg_id="m1")
+        assert store.chat.turn_for_client_message(conv, "m1") == "t1"
+        assert store.chat.running_turn(conv) == "t1"
+        store.chat.set_turn_state("t1", "waiting")
+        assert store.chat.running_turn(conv) == "t1"  # waiting for the user still blocks a new turn
+        store.chat.set_turn_state("t1", "running")
+        assert store.chat.interrupt_running_turns() == [(S, 1, conv, "t1")]
+        assert store.chat.turn(conv, "t1").state == "interrupted"
+        assert store.chat.running_turn(conv) is None
 
     def test_citations_persist_per_conversation(self, store: Store) -> None:
-        conv = store.create_conversation(S, 1)
+        conv = store.chat.create_conversation(S, 1)
         refs = [
             {
                 "index": 1,
@@ -125,8 +129,8 @@ class TestConversations:
                 "page": 2,
             }
         ]
-        store.save_citations(S, 1, conv, refs)
-        assert store.citations(S, 1, conv) == refs
+        store.chat.save_citations(S, 1, conv, refs)
+        assert store.chat.citations(S, 1, conv) == refs
 
 
 def _graph(saver: EncryptedCheckpointer) -> object:
@@ -183,10 +187,10 @@ class TestCheckpointer:
             graph = _graph(saver)
             for text in ("eins", "zwei"):
                 await graph.ainvoke({"messages": [HumanMessage(content=text)]}, config)  # type: ignore[attr-defined]
-            before = store.ckpt_rows(thread)
+            before = store.checkpoints.ckpt_rows(thread)
             assert len(before[0]) > 1
             saver.prune([thread])
-            storage, _, blobs = store.ckpt_rows(thread)
+            storage, _, blobs = store.checkpoints.ckpt_rows(thread)
             assert len(storage) == 1
             assert len(blobs) < len(before[2])
             assert len(list(saver.list(config))) == 1  # type: ignore[arg-type]
